@@ -11,7 +11,7 @@ Turn an approved, content-stable Jianying timeline into a packaged copy. Decide 
 
 - Use `jianying-rough-cut` or another content-analysis workflow to decide cuts, fillers, repetition, speaker roles, or Q&A structure. This skill does not change spoken content.
 - Require a stable/approved content pass and an approved subtitle-alignment plan before formal packaging. If packaging reveals a semantic error, return it to `jianying-rough-cut`.
-- Track the shared workflow states when coordinating a multi-skill run. Canonical handoff table lives in the sibling skill `jianying-rough-cut` → `references/workflow-state.md` (install that skill and open that file; do not treat a missing relative path as a local defect).
+- Track the shared workflow states when coordinating a multi-skill run. The handoff table is the document named `workflow-state` inside the sibling skill `jianying-rough-cut` (open that skill’s references folder after it is installed). Do not treat a missing local path as a defect in this skill.
 - This skill assumes `jianying-rough-cut` and `jianying-editor` are installed as sibling skills by name.
 - Use `jianying-editor` for project probing, timeline resolution, decryption, replica handling, backups, atomic write-back, validation, and rollback. Do not create a second project I/O implementation here.
 - Treat raw Jianying fields as version-dependent. Prefer a user-confirmed timeline segment or template as the style source.
