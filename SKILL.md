@@ -1,6 +1,6 @@
 ---
 name: jianying-packaging
-description: Plan, review, and execute post-rough-cut visual and sound packaging in existing Jianying Pro timelines, including upper-track staging, semantic emphasis, reusable templates, animation/effects, transitions, and sound effects. Use after content and subtitle alignment are stable; use jianying-editor for draft access and safe write-back. Do not use for rough-cut content decisions, transcription, or draft decryption/version recovery itself.
+description: Use when packaging or polishing an already content-stable Jianying Pro / 剪映 timeline — flower text (花字), upper-track emphasis (上轨强调), templates, animation, transitions, or sound effects (加音效/卡点音效). Requires approved content pass and subtitle alignment. Do NOT use for rough-cut content decisions, transcription, or draft decryption/version recovery; use jianying-rough-cut and jianying-editor for those.
 ---
 
 # Jianying Packaging
