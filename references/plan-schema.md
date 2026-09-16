@@ -156,6 +156,20 @@ Schema notes:
 - In v1.1, `execution.covered_subtitle_policy` defaults to `preserve`. `disable_after_readback` and `delete_on_clone_after_approval` are clone-only policies; `enable=false` is never sufficient proof of coverage.
 - In v1.1, every non-`none` audio action records `motion_family`, `sound_family`, `selection_basis`, and the occurrence number `reuse_count`; the validator enforces the configured reuse cap.
 
+### `light_content_ops` rules
+
+Packaging may make display-only corrections after rough-cut approval:
+
+- shorten on-screen wording without changing meaning;
+- adjust line breaks and punctuation;
+- select sentence, phrase, word, or character emphasis;
+- define an overlay/coverage relationship;
+- adjust display segmentation while preserving the spoken semantic unit.
+
+Return these to `jianying-rough-cut`: deleting a complete spoken unit; changing numbers, names, terms, conditions, causal relations, or conclusions; changing semantic order; removing fillers, repetitions, false starts, or pauses; correcting speech content rather than its display.
+
+Every light operation records its target, before/after display text when relevant, `semantic_preserved=true`, and review status. The validator must reject semantic deletion or reordering masquerading as a light operation.
+
 ## Locators and operations
 
 Use a locator object with a non-empty `timeline` and exact identifiers. A target for a new object must contain `track_id` or an explicit `track_type` selector; a target for an existing object must contain `segment_id`. A source locator must contain `segment_id`, `material_id`, or `asset_id` as appropriate. `timeline: "target"` is the symbolic name of the cloned target timeline.
