@@ -1,4 +1,0 @@
-interface:
-  display_name: "剪映包装执行"
-  short_description: "基于字幕语义、模板与动画执行剪映视觉和音效包装"
-  default_prompt: "Use $jianying-packaging to review and execute semantic visual and sound packaging on this Jianying timeline."
