@@ -59,13 +59,9 @@ Read [references/property-model.md](references/property-model.md) before changin
 
 ## Sound execution rules
 
-- Add at most one primary sound per semantic animation group unless the approved design explicitly calls for a layered sound.
-- Match sound family to the visible motion and spoken function. Align to `animation_peak` or `transition_peak` when that is the perceptual landing point; do not automatically align every sound to segment start.
-- Reuse an existing target-timeline sound segment when possible. Otherwise clone a complete source sound segment and its material closure from an identified source draft/subdraft.
-- Skip a new sound when an existing sound already covers the same perceptual event within the configured tolerance.
-- Preserve manual replacements and deletions. Record why a sound is appropriate, replaced, or omitted; do not use quantity as the quality metric.
-- Select sounds by motion family → sound family → configurable reuse cap (default 3) → semantic special slot. Record the motion, spoken function, choice reason, and alternative when applicable. Do not infer a sound from a cache md5.
-- Check duration, source range, target range, volume, fades, overlap, and whether the sound masks dialogue.
+- At most one primary sound per semantic animation group unless the approved design explicitly requires a layer.
+- Align to the perceptual landing point (`animation_peak` or `transition_peak` when that is where the motion lands); do not auto-align every sound to segment start. Fail closed when duration, mask, or dialogue collision is unresolved.
+- Select motion family → sound family → reuse cap (default 3) → semantic special slot. The canonical table and selection detail live in [references/semantic-packaging.md](references/semantic-packaging.md#sound-choice). Do not infer a sound from a cache md5. Preserve manual replacements/deletions and record rationale.
 
 ## Safe execution implementation
 
