@@ -1,6 +1,8 @@
 # Evidence-based capability audit
 
-This audit separates demonstrated operations from schema observations and requested future capability. Its entries are project- and version-scoped evidence from the Jianying packaging scripts and backup manifests in `D:/Users/11/Documents/ChatGPT/jianyin`, the active timeline of `E:/JianyingPro/JianyingPro Drafts/9月14日 (1)`, and the existing `jianying-rough-cut`, `AI剪口播`, and `jianying-editor` skills. Re-confirm each capability against the current draft and prototype before execution; an observed field or an older audit is not a universal support guarantee.
+> Paths below are evidence provenance examples, not runtime requirements. Always use the user-provided draft path.
+
+This audit separates demonstrated operations from schema observations and requested future capability. Its entries are project- and version-scoped evidence from the Jianying packaging scripts and backup manifests in `<user-draft-root>/...`, the active timeline of `<jianying-install-or-material-root>/...`, and the existing `jianying-rough-cut`, `AI剪口播`, and `jianying-editor` skills. Re-confirm each capability against the current draft and prototype before execution; an observed field or an older audit is not a universal support guarantee.
 
 ## Demonstrated packaging operations
 
