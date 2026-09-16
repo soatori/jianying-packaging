@@ -288,6 +288,18 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         plan["groups"][0]["status"] = "approved"
         self.assert_error_contains(plan, "must be migrated before apply")
 
+    def test_tolerance_may_override_default(self) -> None:
+        plan = valid_plan()
+        plan["duplicate_policy"]["start_tolerance_us"] = 25_000
+        errors, _ = VALIDATOR.validate_plan(plan)
+        self.assertEqual(errors, [])
+
+    def test_selection_order_accepts_nonempty_known_keys(self) -> None:
+        plan = valid_plan()
+        plan["sound_selection"]["selection_order"] = ["sound_family", "motion_family"]
+        errors, _ = VALIDATOR.validate_plan(plan)
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

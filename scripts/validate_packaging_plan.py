@@ -304,8 +304,7 @@ def validate_v11_contract(data: dict[str, Any], errors: list[str], warnings: lis
         tolerance = duplicate.get("start_tolerance_us")
         if not is_int(tolerance) or tolerance <= 0:
             errors.append("duplicate_policy.start_tolerance_us: must be positive integer")
-        elif tolerance != 40_000:
-            errors.append("duplicate_policy.start_tolerance_us must be 40000us")
+        # default is 40000us; any positive integer override is allowed
         if duplicate.get("text_must_match") is not False:
             errors.append("duplicate_policy.text_must_match: must be false")
         if duplicate.get("cross_track") not in {"cover_or_delete_target", "preserve", "review"}:
@@ -341,8 +340,13 @@ def validate_v11_contract(data: dict[str, Any], errors: list[str], warnings: lis
         if not is_int(reuse_cap) or reuse_cap <= 0:
             errors.append("sound_selection.reuse_cap: must be a positive integer")
             reuse_cap = 3
-        if sound_selection.get("selection_order") != ["motion_family", "sound_family", "reuse_cap", "semantic_special_slot"]:
-            errors.append("sound_selection.selection_order: must document motion-to-sound selection")
+        order = sound_selection.get("selection_order")
+        if not isinstance(order, list) or not order:
+            errors.append("sound_selection.selection_order: must be a non-empty array")
+        else:
+            allowed = {"motion_family", "sound_family", "reuse_cap", "semantic_special_slot"}
+            if any((not isinstance(key, str)) or key not in allowed for key in order):
+                errors.append("sound_selection.selection_order: unknown selection key")
 
     light_ops = data.get("light_content_ops")
     if not isinstance(light_ops, list):

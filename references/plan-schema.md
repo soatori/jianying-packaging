@@ -48,6 +48,11 @@ The canonical v1.1 additions are:
 }
 ```
 
+Schema notes:
+
+- `start_tolerance_us` defaults to `40000` but any positive integer is valid.
+- `selection_order` must be a non-empty list of known keys (`motion_family`, `sound_family`, `reuse_cap`, `semantic_special_slot`); order may vary.
+
 ## Legacy 1.0 example (migration reference)
 
 ```json
