@@ -46,6 +46,15 @@ PASS: 0 error(s), 1 warning(s)
 
 Warning: cross-skill relative link to `../jianying-rough-cut/references/workflow-state.md` — expected and documented as intentional.
 
-## Deferred (not done this phase)
+## Deferred (cleared 2026-09-16)
 
-Per plan: `agents/openai.yaml`, `sfx-palette.md`, `light-content-policy.md` deletion; flower-text JSON archaeology; validate_plan split; `__pycache__` purge.
+Cleared in commits `0edcca2` + `3524dff`:
+
+- Deleted `agents/openai.yaml`
+- Deleted `references/sfx-palette.md` (was pointer; no SKILL inbound links)
+- Deleted `references/light-content-policy.md` (canonical rules in plan-schema)
+- Removed `not_selected` archaeology from `flower-text-templates.json` (~122 lines)
+
+Still deferred (optional / low value): split 550-line `validate_plan()`; purge local `__pycache__` (untracked).
+
+Post-clear validation: `unittest` **15/15 OK**; `validate_skill.py` PASS 0 errors / 1 cross-skill warning.
