@@ -70,7 +70,7 @@ Create project-specific mutation code outside this skill. It may import reusable
 
 Before a write:
 
-- ensure Jianying has saved and released the draft;
+- recommend closing Jianying and its tray/background process before a write; if it remains open, first ensure Jianying has saved and released the draft and treat the runtime warning as a review point;
 - clone the source timeline unless the user explicitly requested in-place changes; an apply plan may bypass this only with an explicit authorization note and `execution.allow_in_place: true`;
 - keep `execution.preserve_manual_edits: true` unless the user explicitly authorizes overwriting them, recorded by `execution.allow_manual_overwrite: true` and an authorization note;
 - fail closed when a template, material closure, target segment, or coordinate conversion is ambiguous;
