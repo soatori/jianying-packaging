@@ -1,0 +1,5 @@
+{
+  "catalog_version": "1.0",
+  "description": "Generic Jianying sound metadata only. Populate with observed preset records; do not invent IDs.",
+  "presets": []
+}

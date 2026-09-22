@@ -1,0 +1,15 @@
+{
+  "pool_version": "1.0",
+  "selection_policy": "choose_one_after_semantic_filter",
+  "pools": [
+    {"pool_id": "pop-default", "motion_family": "pop", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "reveal-default", "motion_family": "reveal", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "typing-default", "motion_family": "typing", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "sweep-default", "motion_family": "sweep", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "impact-default", "motion_family": "impact", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "mechanical_open-default", "motion_family": "mechanical_open", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "warning_pulse-default", "motion_family": "warning_pulse", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "confirmation-default", "motion_family": "confirmation", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
+    {"pool_id": "none-default", "motion_family": "none", "min_candidates": 0, "candidates": [], "status": "not_applicable"}
+  ]
+}

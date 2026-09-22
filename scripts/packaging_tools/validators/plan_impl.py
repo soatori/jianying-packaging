@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,9 @@ from typing import Any
 CATEGORIES = {
     "question", "core_point", "number_parameter", "product_brand",
     "technical_term", "risk_warning", "conclusion", "contrast_turn",
-    "emotion", "cta", "transition", "ordinary_explanation",
+    "emotion", "cta", "transition", "ordinary_explanation", "hook",
+    "background", "reaction", "answer", "evidence", "technical_detail",
+    "contrast", "benefit", "summary",
 }
 STATUSES = {"approved", "review", "skip"}
 VISUAL_OPERATIONS = {
@@ -29,8 +33,22 @@ MOTIONS = {
     "pop", "reveal", "typing", "sweep", "impact", "mechanical_open",
     "warning_pulse", "confirmation", "none", "custom",
 }
-SUPPORTED_SCHEMA_VERSIONS = {"1.0", "1.1"}
+SUPPORTED_SCHEMA_VERSIONS = {"1.0", "1.1", "1.2"}
 PACKAGING_PHASES = {"staging", "final"}
+REMAP_STATUSES = {"not_required", "pending", "verified", "blocked"}
+LAYOUT_POSITION_MODES = {"relative_template", "legacy_absolute"}
+LAYOUT_ANCHOR_TYPES = {"runtime_reference", "group_origin", "manual_reference"}
+LAYOUT_COLLISION_POLICIES = {"warn", "block", "intentional_overlap", "intentional_attachment"}
+LAYOUT_REF_TYPES = {"subtitle_unit", "auxiliary_mark"}
+LAYOUT_ALIGNMENTS = {"left", "center", "right", "top", "middle", "bottom"}
+TRIM_POLICIES = {"text_span", "motion_span", "natural", "manual_review"}
+LEADING_SILENCE_POLICIES = {"skip", "preserve", "manual_review"}
+SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "unknown"}
+SOUND_STATUSES = {"verified", "candidate", "needs_listen", "blocked"}
+MOTION_SOUND_FAMILIES = {
+    "pop", "reveal", "typing", "sweep", "impact", "mechanical_open",
+    "warning_pulse", "confirmation", "none",
+}
 STAGING_REVIEW_STATUSES = {"pending", "reviewing", "approved"}
 COVERED_SUBTITLE_POLICIES = {
     "preserve", "disable_after_readback", "delete_on_clone_after_approval", "review",
@@ -42,6 +60,14 @@ LIGHT_CONTENT_OPERATIONS = {
 }
 TEMPLATE_HEALTH_STATUSES = {"verified", "fallback", "blocked"}
 CAPABILITY_EVIDENCE_STATUS = {"demonstrated", "experimental", "unsupported"}
+CONTEXT_STOP_CONDITIONS = {
+    "pending_remap",
+    "text_mismatch",
+    "layout_collision",
+    "unverified_sound",
+    "leading_silence_unresolved",
+    "missing_backup",
+}
 
 NEW_OBJECT_VISUAL_OPERATIONS = {
     "clone_template", "copy_from_subtitle", "add_overlay",
@@ -66,11 +92,20 @@ def is_int(value: Any) -> bool:
 
 
 def is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def is_nonempty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def sha256_text(value: str) -> str:
+    """Return the canonical UTF-8 hash used for final subtitle text bindings."""
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def validate_string_list(
@@ -268,18 +303,402 @@ def validate_reference_status(path: str, value: Any, errors: list[str], *, requi
     return status if isinstance(status, str) else None
 
 
-def validate_v11_contract(data: dict[str, Any], errors: list[str], warnings: list[str]) -> tuple[str | None, int]:
+def _detect_cycle(edges: dict[str, set[str]]) -> bool:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        for child in edges.get(node, set()):
+            if visit(child):
+                return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(visit(node) for node in edges)
+
+
+def _load_reference_json(filename: str) -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[3] / "references" / filename
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _validate_slot_transform(path: str, slot: dict[str, Any], errors: list[str]) -> None:
+    scale = slot.get("scale")
+    if scale is not None:
+        if isinstance(scale, dict):
+            for axis in ("x", "y"):
+                if not is_number(scale.get(axis)) or scale[axis] <= 0:
+                    errors.append(f"{path}.scale.{axis}: must be a positive number")
+        elif not is_number(scale) or scale <= 0:
+            errors.append(f"{path}.scale: must be a positive number or x/y object")
+    if "rotation" in slot and not is_number(slot.get("rotation")):
+        errors.append(f"{path}.rotation: must be numeric")
+    if "alignment" in slot and slot.get("alignment") not in LAYOUT_ALIGNMENTS:
+        errors.append(f"{path}.alignment: invalid")
+
+
+def validate_layout(
+    path: str,
+    value: Any,
+    errors: list[str],
+    warnings: list[str],
+    *,
+    final_phase: bool,
+    schema_v12: bool,
+    semantic_refs: set[str],
+    auxiliary_refs: set[str],
+    layout_registry: dict[str, Any],
+) -> None:
+    if not isinstance(value, dict):
+        errors.append(f"{path}: required layout object")
+        return
+    if not is_nonempty_string(value.get("template_id")):
+        errors.append(f"{path}.template_id: required non-empty string")
+    version = value.get("template_version")
+    if not is_int(version) or version <= 0:
+        errors.append(f"{path}.template_version: must be a positive integer")
+    position_mode = value.get("position_mode", "relative_template")
+    if position_mode not in LAYOUT_POSITION_MODES:
+        errors.append(f"{path}.position_mode: invalid")
+
+    templates = layout_registry.get("templates") if isinstance(layout_registry, dict) else None
+    template_record = None
+    if isinstance(templates, list):
+        template_record = next(
+            (
+                item for item in templates
+                if isinstance(item, dict) and item.get("template_id") == value.get("template_id")
+            ),
+            None,
+        )
+    if template_record is None:
+        errors.append(f"{path}.template_id: not found in layout registry")
+    elif is_int(version) and template_record.get("template_version") != version:
+        errors.append(f"{path}.template_version: does not match layout registry")
+
+    anchor = value.get("anchor")
+    if not isinstance(anchor, dict):
+        errors.append(f"{path}.anchor: required object")
+    else:
+        anchor_type = anchor.get("type")
+        if anchor_type not in LAYOUT_ANCHOR_TYPES:
+            errors.append(f"{path}.anchor.type: invalid")
+        if position_mode == "relative_template":
+            if anchor_type == "runtime_reference":
+                if anchor.get("x") != "X0" or anchor.get("y") != "Y0":
+                    errors.append(f"{path}.anchor: runtime_reference must use X0 and Y0")
+            elif anchor_type == "manual_reference" and final_phase:
+                warnings.append(f"{path}.anchor: manual reference requires visual verification")
+
+    slots = value.get("slots")
+    if not isinstance(slots, list) or not slots:
+        errors.append(f"{path}.slots: must be a non-empty array")
+        slots = []
+    slot_ids: set[str] = set()
+    references: list[tuple[str, str]] = []
+    edges: dict[str, set[str]] = {}
+    for index, slot in enumerate(slots):
+        slot_path = f"{path}.slots[{index}]"
+        if not isinstance(slot, dict):
+            errors.append(f"{slot_path}: must be an object")
+            continue
+        slot_id = slot.get("id")
+        if not is_nonempty_string(slot_id):
+            errors.append(f"{slot_path}.id: required non-empty string")
+            continue
+        if slot_id in slot_ids:
+            errors.append(f"{slot_path}.id: duplicate {slot_id!r}")
+        slot_ids.add(slot_id)
+        if not is_nonempty_string(slot.get("text_ref")):
+            errors.append(f"{slot_path}.text_ref: required non-empty string")
+        ref_type = slot.get("ref_type")
+        if schema_v12 and ref_type not in LAYOUT_REF_TYPES:
+            errors.append(f"{slot_path}.ref_type: must be subtitle_unit or auxiliary_mark")
+        elif ref_type is None:
+            ref_type = "subtitle_unit"
+        text_ref = slot.get("text_ref")
+        if is_nonempty_string(text_ref):
+            if ref_type == "subtitle_unit" and text_ref not in semantic_refs:
+                errors.append(f"{slot_path}.text_ref: must reference a declared semantic_unit_ref")
+            elif ref_type == "auxiliary_mark" and text_ref not in auxiliary_refs:
+                errors.append(f"{slot_path}.text_ref: must reference a declared auxiliary_text_ref")
+        offset = slot.get("offset")
+        if not isinstance(offset, dict):
+            errors.append(f"{slot_path}.offset: required object")
+        else:
+            for field in ("dx", "dy"):
+                if not is_number(offset.get(field)):
+                    errors.append(f"{slot_path}.offset.{field}: must be numeric")
+        for field in ("relative_to", "inherit_transform_from"):
+            reference = slot.get(field)
+            if reference is not None:
+                if not is_nonempty_string(reference):
+                    errors.append(f"{slot_path}.{field}: must be a non-empty string")
+                else:
+                    references.append((slot_path, reference))
+                    edges.setdefault(slot_id, set()).add(reference)
+        if "relation_labels" in slot:
+            validate_string_list(f"{slot_path}.relation_labels", slot.get("relation_labels"), errors)
+        _validate_slot_transform(slot_path, slot, errors)
+    for slot_path, reference in references:
+        if reference not in slot_ids:
+            errors.append(f"{slot_path}: references unknown slot {reference!r}")
+    if _detect_cycle(edges):
+        errors.append(f"{path}.slots: relative references must not contain cycles")
+
+    if value.get("fallback") != "manual_review":
+        errors.append(f"{path}.fallback: must be manual_review")
+    constraints = value.get("constraints", {})
+    if not isinstance(constraints, dict):
+        errors.append(f"{path}.constraints: must be an object")
+    else:
+        if final_phase and not is_nonempty_string(constraints.get("safe_zone")):
+            errors.append(f"{path}.constraints.safe_zone: required for final layout validation")
+        collision = constraints.get("collision")
+        if collision is not None and collision not in LAYOUT_COLLISION_POLICIES:
+            errors.append(f"{path}.constraints.collision: invalid")
+        if final_phase and collision is None:
+            errors.append(f"{path}.constraints.collision: required for final layout validation")
+    if position_mode == "legacy_absolute":
+        if value.get("visual_verification") is not True:
+            errors.append(f"{path}: legacy_absolute requires visual_verification=true")
+        if final_phase:
+            warnings.append(f"{path}: legacy absolute layout is allowed only after visual review")
+
+
+def _validate_sound_pool(
+    path: str,
+    audio: dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    *,
+    mode: str | None,
+    phase: str | None,
+    sound_pools: dict[str, Any],
+    sound_catalog: dict[str, Any],
+) -> tuple[dict[str, Any] | None, set[str]]:
+    pool_ref = audio.get("candidate_pool_ref")
+    if not is_nonempty_string(pool_ref):
+        errors.append(f"{path}.candidate_pool_ref: required for schema 1.2 audio")
+        return None, set()
+    pool_data: dict[str, Any] | None = None
+    inline_used = False
+    inline = audio.get("candidate_pool")
+    if isinstance(inline, list):
+        inline_used = True
+        pool_data = {"pool_id": pool_ref, "min_candidates": 3, "candidates": inline}
+    else:
+        for item in sound_pools.get("pools", []) if isinstance(sound_pools.get("pools"), list) else []:
+            if isinstance(item, dict) and item.get("pool_id") == pool_ref:
+                pool_data = item
+                break
+    if pool_data is None:
+        errors.append(f"{path}.candidate_pool_ref: unknown candidate pool {pool_ref!r}")
+        return None, set()
+    candidates = pool_data.get("candidates")
+    if not isinstance(candidates, list):
+        errors.append(f"{path}.candidate_pool: candidates must be an array")
+        return pool_data, set()
+    candidate_ids: set[str] = set()
+    candidate_statuses: dict[str, str] = {}
+    for index, candidate in enumerate(candidates):
+        candidate_path = f"{path}.candidate_pool[{index}]"
+        if not isinstance(candidate, dict) or not is_nonempty_string(candidate.get("preset_id")):
+            errors.append(f"{candidate_path}.preset_id: required")
+            continue
+        preset_id = candidate["preset_id"]
+        if preset_id in candidate_ids:
+            errors.append(f"{candidate_path}.preset_id: duplicate")
+        candidate_ids.add(preset_id)
+        status = candidate.get("status")
+        if status not in SOUND_STATUSES:
+            errors.append(f"{candidate_path}.status: invalid")
+        elif preset_id not in candidate_statuses:
+            candidate_statuses[preset_id] = status
+        if "rank" in candidate and (not is_int(candidate.get("rank")) or candidate["rank"] <= 0):
+            errors.append(f"{candidate_path}.rank: must be a positive integer")
+        if "sound_form" in candidate and candidate.get("sound_form") not in SOUND_FORMS:
+            errors.append(f"{candidate_path}.sound_form: invalid")
+
+    final_or_apply = mode == "apply" or phase == "final"
+    if inline_used and final_or_apply:
+        errors.append(f"{path}.candidate_pool: inline candidate pools are review-only")
+
+    expected_motion = audio.get("motion_family")
+    pool_motion = pool_data.get("motion_family")
+    if pool_motion is not None and expected_motion != pool_motion:
+        errors.append(
+            f"{path}.candidate_pool_ref: motion family {pool_motion!r} does not match {expected_motion!r}"
+        )
+    minimum = pool_data.get("min_candidates", 3)
+    if not is_int(minimum) or minimum < 0:
+        errors.append(f"{path}.candidate_pool.min_candidates: must be a non-negative integer")
+        minimum = 3
+    if len(candidate_ids) < minimum:
+        message = f"{path}.candidate_pool: candidate_pool_incomplete ({len(candidate_ids)}/{minimum})"
+        if final_or_apply:
+            errors.append(message)
+        else:
+            warnings.append(message)
+    selected = audio.get("selected_preset_id")
+    if not is_nonempty_string(selected):
+        errors.append(f"{path}.selected_preset_id: required")
+    elif selected not in candidate_ids:
+        errors.append(f"{path}.selected_preset_id: must belong to candidate pool")
+
+    catalog_records = {
+        item.get("preset_id"): item
+        for item in sound_catalog.get("presets", [])
+        if isinstance(item, dict) and is_nonempty_string(item.get("preset_id"))
+    }
+    catalog_ref = audio.get("catalog_ref")
+    if catalog_ref != selected:
+        errors.append(f"{path}.catalog_ref: must equal selected_preset_id")
+    if catalog_ref not in catalog_records:
+        message = f"{path}.catalog_ref: preset is absent from the sound catalog"
+        if final_or_apply:
+            errors.append(message)
+        else:
+            warnings.append(message)
+    elif catalog_records[catalog_ref].get("status") != "verified" and final_or_apply:
+        errors.append(f"{path}.catalog_ref: final/apply requires a verified catalog record")
+
+    return pool_data, candidate_ids
+
+
+def _validate_common_source_status(
+    data: dict[str, Any],
+    errors: list[str],
+) -> str | None:
     source = data.get("source")
-    content_status: str | None = None
-    alignment_status: str | None = None
     if not isinstance(source, dict):
-        return None, 3
+        return None
     content_status = source.get("content_pass")
     if content_status not in {"stable", "approved"}:
         errors.append("source.content_pass: must be stable or approved")
-    alignment_status = validate_reference_status(
+    return validate_reference_status(
         "source.subtitle_alignment", source.get("subtitle_alignment"), errors, required=True
     )
+
+
+def _validate_final_subtitle_units(
+    source: dict[str, Any],
+    errors: list[str],
+) -> dict[str, str]:
+    units = source.get("final_subtitle_units")
+    if not isinstance(units, list) or not units:
+        errors.append("source.final_subtitle_units: required non-empty array for schema 1.2")
+        return {}
+
+    result: dict[str, str] = {}
+    for index, unit in enumerate(units):
+        path = f"source.final_subtitle_units[{index}]"
+        if not isinstance(unit, dict):
+            errors.append(f"{path}: must be an object")
+            continue
+        unit_id = unit.get("unit_id")
+        text_hash = unit.get("text_hash")
+        if not is_nonempty_string(unit_id):
+            errors.append(f"{path}.unit_id: required non-empty string")
+            continue
+        if unit_id in result:
+            errors.append(f"{path}.unit_id: duplicate {unit_id!r}")
+        if not is_nonempty_string(text_hash):
+            errors.append(f"{path}.text_hash: required non-empty string")
+        if unit.get("status") != "approved":
+            errors.append(f"{path}.status: must be approved")
+        result[unit_id] = text_hash if is_nonempty_string(text_hash) else ""
+    return result
+
+
+def validate_v12_contract(
+    data: dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+) -> dict[str, str]:
+    source = data.get("source")
+    if not isinstance(source, dict):
+        return {}
+    final_subtitle_hashes = _validate_final_subtitle_units(source, errors)
+    final_reference = source.get("final_subtitle_reference")
+    if not isinstance(final_reference, dict):
+        errors.append("source.final_subtitle_reference: required object for schema 1.2")
+    else:
+        for field in ("id", "hash"):
+            if not is_nonempty_string(final_reference.get(field)):
+                errors.append(f"source.final_subtitle_reference.{field}: required non-empty string")
+        if final_reference.get("status") != "approved":
+            errors.append("source.final_subtitle_reference.status: must be approved")
+
+    comparison = data.get("comparison")
+    if not isinstance(comparison, dict):
+        errors.append("comparison: required object for schema 1.2")
+    else:
+        for field in ("source_order_hash", "target_order_hash"):
+            if not is_nonempty_string(comparison.get(field)):
+                errors.append(f"comparison.{field}: required non-empty string")
+        if comparison.get("remap_status") not in REMAP_STATUSES:
+            errors.append("comparison.remap_status: invalid")
+        if (
+            is_nonempty_string(comparison.get("source_order_hash"))
+            and is_nonempty_string(comparison.get("target_order_hash"))
+            and comparison.get("source_order_hash") != comparison.get("target_order_hash")
+            and comparison.get("remap_status") == "not_required"
+        ):
+            errors.append("comparison.remap_status: order hashes differ, remap cannot be not_required")
+
+    execution = data.get("execution")
+    if not isinstance(execution, dict):
+        return final_subtitle_hashes
+    authorization_note = execution.get("authorization_note")
+    allow_in_place = execution.get("allow_in_place") is True and is_nonempty_string(authorization_note)
+    allow_manual_overwrite = execution.get("allow_manual_overwrite") is True and is_nonempty_string(authorization_note)
+    if execution.get("clone_source") is not True and not allow_in_place:
+        errors.append("execution.clone_source: must be true for schema 1.2")
+    if execution.get("pre_write_backup") != "required":
+        errors.append("execution.pre_write_backup: must be required for schema 1.2")
+    if execution.get("preserve_source") is not True and not allow_in_place:
+        errors.append("execution.preserve_source: must be true for schema 1.2")
+    if execution.get("preserve_manual_edits") is not True and not allow_manual_overwrite:
+        errors.append("execution.preserve_manual_edits: must be true for schema 1.2")
+
+    context = execution.get("context_contract")
+    if not isinstance(context, dict):
+        errors.append("execution.context_contract: required for schema 1.2")
+    else:
+        expected_context = {
+            "anchor_policy": "runtime_final_subtitle_x0_y0",
+            "layout_policy": "group_atomic_relative",
+            "sound_policy": "catalog_candidate_single",
+        }
+        for field, expected in expected_context.items():
+            if context.get(field) != expected:
+                errors.append(f"execution.context_contract.{field}: must be {expected}")
+        if context.get("readback_required") is not True:
+            errors.append("execution.context_contract.readback_required: must be true")
+        stop_conditions = context.get("stop_conditions")
+        if not isinstance(stop_conditions, list) or any(not is_nonempty_string(item) for item in stop_conditions):
+            errors.append("execution.context_contract.stop_conditions: must be an array of strings")
+        elif not CONTEXT_STOP_CONDITIONS.issubset(set(stop_conditions)):
+            errors.append("execution.context_contract.stop_conditions: missing required stop condition")
+    return final_subtitle_hashes
+
+
+def validate_v11_contract(data: dict[str, Any], errors: list[str], warnings: list[str]) -> tuple[str | None, int]:
+    source = data.get("source")
+    if not isinstance(source, dict):
+        return None, 3
+    alignment_status = _validate_common_source_status(data, errors)
 
     staging = data.get("staging")
     if not isinstance(staging, dict):
@@ -385,23 +804,62 @@ def validate_v11_contract(data: dict[str, Any], errors: list[str], warnings: lis
     return alignment_status, reuse_cap
 
 
-def validate_plan(data: Any) -> tuple[list[str], list[str]]:
+def _visual_values(group: dict[str, Any], path: str, errors: list[str]) -> list[Any]:
+    """Return canonical group.visual while checking legacy aliases."""
+    aliases = [key for key in ("visual", "visuals", "visual_operations") if key in group]
+    if not aliases:
+        return []
+    canonical_key = "visual" if "visual" in group else aliases[0]
+    canonical = group.get(canonical_key)
+    if not isinstance(canonical, list):
+        errors.append(f"{path}.visual: must be an array")
+        canonical = []
+    for alias in aliases:
+        if alias == canonical_key:
+            continue
+        value = group.get(alias)
+        if not isinstance(value, list):
+            errors.append(f"{path}.{alias}: must be an array")
+        elif value != canonical:
+            errors.append(f"{path}: visual aliases disagree ({alias})")
+    return canonical
+
+
+def validate_plan(
+    data: Any,
+    *,
+    sound_catalog: dict[str, Any] | None = None,
+    sound_pools: dict[str, Any] | None = None,
+    layout_registry: dict[str, Any] | None = None,
+) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     if not isinstance(data, dict):
         return ["root: plan must be a JSON object"], warnings
 
+    if sound_catalog is None:
+        sound_catalog = _load_reference_json("sound-preset-catalog.json")
+    if sound_pools is None:
+        sound_pools = _load_reference_json("motion-sound-pools.json")
+    if layout_registry is None:
+        layout_registry = _load_reference_json("layout-template-registry.json")
+
     schema_version = data.get("schema_version")
     if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
-        errors.append("schema_version: expected '1.0' or '1.1'")
+        errors.append("schema_version: expected '1.0', '1.1', or '1.2'")
     is_v11 = schema_version == "1.1"
+    is_v12 = schema_version == "1.2"
     if schema_version == "1.0":
-        warnings.append("schema_version 1.0 is legacy; migrate to 1.1 before apply")
+        warnings.append("schema_version 1.0 is legacy; migrate to 1.2 before apply")
 
     alignment_status: str | None = None
+    final_subtitle_hashes: dict[str, str] = {}
     reuse_cap = 3
     if is_v11:
         alignment_status, reuse_cap = validate_v11_contract(data, errors, warnings)
+    if is_v12:
+        alignment_status = _validate_common_source_status(data, errors)
+        final_subtitle_hashes = validate_v12_contract(data, errors, warnings)
 
     source = data.get("source")
     if not isinstance(source, dict):
@@ -485,6 +943,17 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                 errors.append("execution.phase=final requires staging.review_status=approved")
             if alignment_status != "approved":
                 errors.append("execution.phase=final requires approved subtitle alignment")
+        if is_v12 and phase not in PACKAGING_PHASES:
+            errors.append("execution.phase: must be staging or final")
+        if is_v12 and phase == "final":
+            staging = data.get("staging")
+            if not isinstance(staging, dict) or staging.get("review_status") != "approved":
+                errors.append("execution.phase=final requires staging.review_status=approved")
+            if alignment_status != "approved":
+                errors.append("execution.phase=final requires approved subtitle alignment")
+            comparison = data.get("comparison")
+            if isinstance(comparison, dict) and comparison.get("remap_status") not in {"not_required", "verified"}:
+                errors.append("execution.phase=final requires comparison.remap_status=not_required or verified")
         if is_v11 and phase == "staging" and covered_policy not in {"preserve", "review"}:
             errors.append("staging phase may only preserve or review covered subtitles")
         if is_v11 and covered_policy == "delete_on_clone_after_approval":
@@ -495,8 +964,8 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
             warnings.append("disable_after_readback requires visual read-back; it is not a success condition by itself")
 
         if mode == "apply":
-            if schema_version == "1.0":
-                errors.append("schema_version 1.0 must be migrated before apply")
+            if schema_version in {"1.0", "1.1"}:
+                errors.append(f"schema_version {schema_version} must be migrated before apply (to 1.2)")
             if target_clone_source is not True and not allow_in_place:
                 errors.append(
                     "apply requires target.clone_source=true unless allow_in_place is explicitly authorized"
@@ -561,6 +1030,7 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                 validate_string_list(
                     f"{path}.template_source.material_ids",
                     template_source.get("material_ids"),
+                    errors,
                 )
 
         allowed = validate_string_list(
@@ -612,6 +1082,59 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
         if not is_nonempty_string(group.get("context")):
             errors.append(f"{path}.context: required non-empty string")
 
+        semantic_refs: set[str] = set()
+        auxiliary_refs: set[str] = set()
+        if is_v12:
+            semantic_refs = set(validate_string_list(
+                f"{path}.semantic_unit_refs",
+                group.get("semantic_unit_refs"),
+                errors,
+                require_nonempty=True,
+            ))
+            auxiliary_refs = set(validate_string_list(
+                f"{path}.auxiliary_text_refs",
+                group.get("auxiliary_text_refs", []),
+                errors,
+            ))
+            for unit_id in sorted(semantic_refs):
+                if unit_id not in final_subtitle_hashes:
+                    errors.append(
+                        f"{path}.semantic_unit_refs: {unit_id!r} is missing from source.final_subtitle_units"
+                    )
+            subtitle_anchor = group.get("subtitle_anchor")
+            if not isinstance(subtitle_anchor, dict):
+                errors.append(f"{path}.subtitle_anchor: required object for schema 1.2")
+            else:
+                if not is_nonempty_string(subtitle_anchor.get("unit_id")):
+                    errors.append(f"{path}.subtitle_anchor.unit_id: required")
+                if not is_nonempty_string(subtitle_anchor.get("text_hash")):
+                    errors.append(f"{path}.subtitle_anchor.text_hash: required")
+                if subtitle_anchor.get("text_authority") != "final_visible_subtitle":
+                    errors.append(f"{path}.subtitle_anchor.text_authority: must be final_visible_subtitle")
+                if semantic_refs and subtitle_anchor.get("unit_id") not in semantic_refs:
+                    errors.append(f"{path}.subtitle_anchor.unit_id: must be listed in semantic_unit_refs")
+                anchor_id = subtitle_anchor.get("unit_id")
+                expected_anchor_hash = final_subtitle_hashes.get(anchor_id)
+                if expected_anchor_hash and subtitle_anchor.get("text_hash") != expected_anchor_hash:
+                    errors.append(f"{path}.subtitle_anchor: text_mismatch with final subtitle unit {anchor_id!r}")
+            group_remap = group.get("remap_status")
+            if group_remap not in REMAP_STATUSES:
+                errors.append(f"{path}.remap_status: invalid")
+            elif phase == "final" and group_remap not in {"not_required", "verified"}:
+                errors.append(f"{path}.remap_status: final groups require not_required or verified")
+            for field in ("source_order_hash", "target_order_hash"):
+                if not is_nonempty_string(group.get(field)):
+                    errors.append(f"{path}.{field}: required for schema 1.2")
+            if (
+                is_nonempty_string(group.get("source_order_hash"))
+                and is_nonempty_string(group.get("target_order_hash"))
+                and group.get("source_order_hash") != group.get("target_order_hash")
+                and group_remap == "not_required"
+            ):
+                errors.append(f"{path}.remap_status: group order hashes differ, remap cannot be not_required")
+            if "sound_selection_basis" in group and not is_nonempty_string(group.get("sound_selection_basis")):
+                errors.append(f"{path}.sound_selection_basis: must be a non-empty string")
+
         group_range = validate_timerange(path + ".range", group.get("range"), errors)
 
         category = group.get("category")
@@ -649,10 +1172,7 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
         if "risk_note" in group and not is_nonempty_string(group.get("risk_note")):
             errors.append(f"{path}.risk_note: must be a non-empty string")
 
-        visuals = group.get("visual", [])
-        if not isinstance(visuals, list):
-            errors.append(f"{path}.visual: must be an array")
-            visuals = []
+        visuals = _visual_values(group, path, errors)
         phrase_start_present = False
 
         for vindex, visual in enumerate(visuals):
@@ -665,7 +1185,7 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
             operation_valid = isinstance(operation, str) and operation in VISUAL_OPERATIONS
             if not operation_valid:
                 errors.append(f"{vpath}.operation: unsupported operation")
-            if is_v11 and phase == "staging" and operation_valid and operation not in {"copy_from_subtitle", "modify_text", "none"}:
+            if phase == "staging" and operation_valid and operation not in {"copy_from_subtitle", "modify_text", "none"}:
                 errors.append(f"{vpath}.operation: staging phase only permits subtitle-copy/display review operations")
 
             object_type = visual.get("object_type")
@@ -721,6 +1241,24 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                 errors.append(f"{vpath}.text: must be a string")
             if operation_valid and operation in {"clone_template", "modify_text"} and object_type == "text" and not is_nonempty_string(visual.get("text")):
                 errors.append(f"{vpath}.text: required for {operation}")
+
+            if is_v12 and object_type == "text" and is_nonempty_string(visual.get("text")):
+                text_ref = visual.get("text_ref")
+                if not is_nonempty_string(text_ref):
+                    errors.append(f"{vpath}.text_ref: required for schema 1.2 text operations")
+                elif text_ref in semantic_refs:
+                    expected_hash = final_subtitle_hashes.get(text_ref)
+                    text_hash = visual.get("text_hash")
+                    if not is_nonempty_string(text_hash):
+                        errors.append(f"{vpath}.text_hash: required for final subtitle text")
+                    elif expected_hash and text_hash != expected_hash:
+                        errors.append(f"{vpath}: text_mismatch with final subtitle unit {text_ref!r}")
+                    if expected_hash and sha256_text(visual["text"]) != expected_hash:
+                        errors.append(f"{vpath}: text_mismatch with final subtitle unit {text_ref!r}")
+                elif text_ref not in auxiliary_refs:
+                    errors.append(
+                        f"{vpath}.text_ref: must reference a declared semantic_unit_ref or auxiliary_text_ref"
+                    )
 
             overrides = visual.get("overrides", {})
             if not isinstance(overrides, dict):
@@ -787,6 +1325,28 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                         f"{vpath}.text: line exceeds max_chars_per_line={max_chars}; split it or add risk_note"
                     )
 
+        if is_v12:
+            has_visual_operation = any(
+                isinstance(visual, dict) and visual.get("operation") not in {None, "none"}
+                for visual in visuals
+            )
+            if has_visual_operation:
+                if "layout" not in group:
+                    if phase == "final":
+                        errors.append(f"{path}.layout: required for schema 1.2 final visual groups")
+                else:
+                    validate_layout(
+                        path + ".layout",
+                        group.get("layout"),
+                        errors,
+                        warnings,
+                        final_phase=phase == "final",
+                        schema_v12=True,
+                        semantic_refs=semantic_refs,
+                        auxiliary_refs=auxiliary_refs,
+                        layout_registry=layout_registry,
+                    )
+
         audio = group.get("audio", {"action": "none"})
         if not isinstance(audio, dict):
             errors.append(f"{path}.audio: must be an object")
@@ -803,6 +1363,8 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                 errors.append(f"{path}.audio.reason: required for a sound action")
             if not is_nonempty_string(audio.get("sound_family")):
                 errors.append(f"{path}.audio.sound_family: required for a sound action")
+            if is_v12 and not is_nonempty_string(group.get("sound_selection_basis")):
+                errors.append(f"{path}.sound_selection_basis: required when a sound is selected")
             if is_v11:
                 if not is_nonempty_string(audio.get("motion_family")):
                     errors.append(f"{path}.audio.motion_family: required for schema 1.1")
@@ -813,7 +1375,62 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                     errors.append(f"{path}.audio.reuse_count: must be a positive integer")
                 elif reuse_count > reuse_cap:
                     errors.append(f"{path}.audio.reuse_count: exceeds configured reuse cap {reuse_cap}")
-            if is_v11 and phase == "staging":
+            sound_pool: dict[str, Any] | None = None
+            sound_pool_ids: set[str] = set()
+            if is_v12:
+                motion_family = audio.get("motion_family")
+                if motion_family not in MOTION_SOUND_FAMILIES or motion_family == "none":
+                    errors.append(f"{path}.audio.motion_family: must be a supported audible motion family")
+                if not is_nonempty_string(audio.get("catalog_ref")):
+                    errors.append(f"{path}.audio.catalog_ref: required for schema 1.2")
+                sound_form = audio.get("sound_form")
+                if sound_form not in SOUND_FORMS:
+                    errors.append(f"{path}.audio.sound_form: invalid")
+                trim_policy = audio.get("trim_policy")
+                if trim_policy not in TRIM_POLICIES:
+                    errors.append(f"{path}.audio.trim_policy: invalid")
+                leading_policy = audio.get("leading_silence_policy")
+                if leading_policy not in LEADING_SILENCE_POLICIES:
+                    errors.append(f"{path}.audio.leading_silence_policy: invalid")
+                leading_silence = audio.get("leading_silence_us")
+                if not is_int(leading_silence) or leading_silence < 0:
+                    errors.append(f"{path}.audio.leading_silence_us: must be a non-negative integer")
+                sound_pool, sound_pool_ids = _validate_sound_pool(
+                    f"{path}.audio",
+                    audio,
+                    errors,
+                    warnings,
+                    mode=mode,
+                    phase=phase,
+                    sound_pools=sound_pools,
+                    sound_catalog=sound_catalog,
+                )
+                final_or_apply = mode == "apply" or phase == "final"
+                if sound_form == "unknown" and final_or_apply:
+                    errors.append(f"{path}.audio.sound_form: unknown form cannot be applied")
+                elif sound_form == "unknown":
+                    warnings.append(f"{path}.audio.sound_form: unknown form requires human review")
+                if sound_form in {"single_hit", "decay"} and trim_policy == "motion_span" and not is_nonempty_string(audio.get("override_reason")):
+                    errors.append(f"{path}.audio.override_reason: required when single/decay uses motion_span")
+                if sound_form == "multi_hit" and trim_policy == "text_span" and not is_nonempty_string(audio.get("override_reason")):
+                    errors.append(f"{path}.audio.override_reason: required when multi_hit uses text_span")
+                if leading_policy == "preserve" and not is_nonempty_string(audio.get("override_reason")):
+                    errors.append(f"{path}.audio.override_reason: required when preserving leading silence")
+                if leading_policy == "manual_review" and final_or_apply:
+                    errors.append(f"{path}.audio.leading_silence_policy: manual review is unresolved")
+                selected = audio.get("selected_preset_id")
+                selected_status = None
+                if sound_pool and isinstance(sound_pool.get("candidates"), list):
+                    for candidate in sound_pool["candidates"]:
+                        if isinstance(candidate, dict) and candidate.get("preset_id") == selected:
+                            selected_status = candidate.get("status")
+                            break
+                if selected_status != "verified":
+                    if final_or_apply:
+                        errors.append(f"{path}.audio.selected_preset_id: final/apply requires a verified candidate")
+                    else:
+                        warnings.append(f"{path}.audio.selected_preset_id: candidate is not verified")
+            if phase == "staging":
                 errors.append(f"{path}.audio: staging phase must not add sound effects")
 
             target_locator = audio.get("target_locator")
@@ -901,6 +1518,46 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
                     f"{path}.audio.target_range", audio.get("target_range"), errors
                 )
 
+            if is_v12:
+                trim_policy = audio.get("trim_policy")
+                text_range = None
+                if "text_range" in audio:
+                    text_range = validate_timerange(
+                        f"{path}.audio.text_range", audio.get("text_range"), errors
+                    )
+                if trim_policy == "text_span" and text_range is None:
+                    errors.append(f"{path}.audio.text_range: required for text_span")
+                if trim_policy == "text_span" and text_range is not None:
+                    if target_range is None:
+                        errors.append(f"{path}.audio.target_range: required for text_span")
+                    elif target_range != text_range:
+                        errors.append(f"{path}.audio.target_range: must equal text_range for text_span")
+                if trim_policy == "motion_span" and motion_event is None:
+                    errors.append(f"{path}.audio: motion_span requires a valid group motion_event")
+                if trim_policy == "motion_span" and motion_event is not None:
+                    expected_motion_range = (
+                        motion_event["start_us"],
+                        motion_event["end_us"],
+                    )
+                    if target_range is None:
+                        errors.append(f"{path}.audio.target_range: required for motion_span")
+                    elif target_range != expected_motion_range:
+                        errors.append(f"{path}.audio.target_range: must equal motion_event for motion_span")
+                if trim_policy == "manual_review" and (mode == "apply" or phase == "final"):
+                    errors.append(f"{path}.audio.trim_policy: manual review is unresolved")
+                leading_policy = audio.get("leading_silence_policy")
+                leading_silence = audio.get("leading_silence_us")
+                if is_int(leading_silence) and leading_silence > 0 and source_range is None:
+                    errors.append(f"{path}.audio.source_range: required when leading silence is known")
+                if (
+                    leading_policy == "skip"
+                    and is_int(leading_silence)
+                    and leading_silence > 0
+                    and source_range is not None
+                    and source_range[0] < leading_silence
+                ):
+                    errors.append(f"{path}.audio.source_range: must start after known leading silence")
+
             sound_key = None
             if asset_id_valid:
                 sound_key = f"asset_id:{asset_id}"
@@ -935,36 +1592,3 @@ def validate_plan(data: Any) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: validate_packaging_plan.py <plan.json>", file=sys.stderr)
-        return 2
-    path = Path(sys.argv[1])
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        errors, warnings = validate_plan(data)
-    except Exception as exc:
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "errors": [f"validation failed safely: {type(exc).__name__}: {exc}"],
-                    "warnings": [],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 1
-    print(
-        json.dumps(
-            {"ok": not errors, "errors": errors, "warnings": warnings},
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-    return 0 if not errors else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

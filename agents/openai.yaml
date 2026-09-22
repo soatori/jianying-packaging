@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jianying-Intelligent-Packaging"
+  short_description: "Semantic Jianying visual, motion, and sound packaging"
+  default_prompt: "Use $jianying-packaging to plan and stage semantic flower-text, motion, and sound packaging for an approved Jianying timeline."

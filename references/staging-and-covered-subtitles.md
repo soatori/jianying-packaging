@@ -11,6 +11,12 @@ Packaging starts from an approved content pass and an approved subtitle-alignmen
 5. Record any user edits against the current saved staging timeline.
 6. Only after review approval apply templates, motion, effects, transitions, color, transform, background, and sound.
 
+During a read-only analysis request, do not create the clone or staging layer. Report the observed template, motion, transition, and sound behavior only. A staging plan may describe candidate visual treatment, but it must not add final templates or sound effects.
+
+## Final-subtitle and remap gate
+
+Packaging text always comes from the approved final-subtitle reference. ASR and older text fields are discrepancy evidence only. Each group carries a semantic-unit reference, subtitle anchor, source/target order fingerprints, and `remap_status`. If source and target order differ, old timestamps are not reusable until semantic remapping is `verified`.
+
 This staging layer is not a semantic second rough cut. It is a visual review surface. If the text is factually wrong, the unit should be returned to `jianying-rough-cut`.
 
 ## Covered subtitle policy

@@ -1,0 +1,76 @@
+{
+  "registry_version": "1.0",
+  "coordinate_space": "runtime_relative_normalized",
+  "anchor_defaults": {
+    "type": "runtime_reference",
+    "x": "X0",
+    "y": "Y0"
+  },
+  "templates": [
+    {
+      "template_id": "center_single",
+      "template_version": 1,
+      "position_mode": "relative_template",
+      "slots": [
+        {"id": "main", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref>", "offset": {"dx": 0.0, "dy": 0.0}}
+      ],
+      "constraints": {"safe_zone": "project_safe_zone", "collision": "block"},
+      "fallback": "manual_review"
+    },
+    {
+      "template_id": "center_stack",
+      "template_version": 1,
+      "position_mode": "relative_template",
+      "slots": [
+        {"id": "main", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref>", "offset": {"dx": 0.0, "dy": -0.05}},
+        {"id": "secondary", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref-2>", "relative_to": "main", "offset": {"dx": 0.0, "dy": 0.10}, "inherit_transform_from": "main"}
+      ],
+      "constraints": {"safe_zone": "project_safe_zone", "collision": "block"},
+      "fallback": "manual_review"
+    },
+    {
+      "template_id": "side_pair",
+      "template_version": 1,
+      "position_mode": "relative_template",
+      "slots": [
+        {"id": "left", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref>", "offset": {"dx": -0.28, "dy": -0.04}},
+        {"id": "right", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref-2>", "offset": {"dx": 0.28, "dy": 0.04}}
+      ],
+      "constraints": {"safe_zone": "project_safe_zone", "collision": "block"},
+      "fallback": "manual_review"
+    },
+    {
+      "template_id": "overlay_replace",
+      "template_version": 1,
+      "position_mode": "relative_template",
+      "slots": [
+        {"id": "base", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref>", "offset": {"dx": 0.0, "dy": 0.0}},
+        {"id": "replacement", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref-2>", "relative_to": "base", "offset": {"dx": 0.0, "dy": 0.0}, "inherit_transform_from": "base"}
+      ],
+      "constraints": {"safe_zone": "project_safe_zone", "collision": "intentional_overlap"},
+      "fallback": "manual_review"
+    },
+    {
+      "template_id": "attached_mark",
+      "template_version": 1,
+      "position_mode": "relative_template",
+      "slots": [
+        {"id": "main", "ref_type": "subtitle_unit", "text_ref": "<final-subtitle-ref>", "offset": {"dx": 0.0, "dy": 0.0}},
+        {"id": "mark", "ref_type": "auxiliary_mark", "text_ref": "<subordinate-mark-ref>", "relative_to": "main", "offset": {"dx": 0.44, "dy": -0.02}, "inherit_transform_from": "main", "relation_labels": ["attached", "subordinate"]}
+      ],
+      "constraints": {"safe_zone": "project_safe_zone", "collision": "intentional_attachment"},
+      "fallback": "manual_review"
+    },
+    {
+      "template_id": "composite_basic",
+      "template_version": 1,
+      "extends": "center_stack",
+      "position_mode": "relative_template",
+      "slots": [
+        {"id": "mark", "ref_type": "auxiliary_mark", "text_ref": "<subordinate-mark-ref>", "relative_to": "main", "offset": {"dx": 0.44, "dy": -0.02}, "inherit_transform_from": "main", "relation_labels": ["attached", "subordinate"]}
+      ],
+      "constraints": {"safe_zone": "project_safe_zone", "collision": "intentional_attachment"},
+      "fallback": "manual_review"
+    }
+  ]
+}
