@@ -43,6 +43,7 @@ Use level 1 for supportive emphasis, level 2 for important information, and leve
 - Preserve the original start of each spoken phrase unless an approved template intentionally stages the phrases.
 - Do not merge unrelated lines to fit a template.
 - Treat punctuation, labels, icons, and background shapes as subordinate layers of the same group.
+- When emphasis lines are copied onto an upper track they inherit the caption baseline. Anchor the first/single line on that baseline and move apart only the lines that genuinely overlap in time, by the reference-derived row spacing; for dense multi-name groups prefer a two-column block near the safe-zone edge over an ever-taller single stack.
 
 ## Sound choice
 
@@ -91,6 +92,7 @@ Default the sound anchor to the perceptual landing point, usually `animation_pea
 ## Restraint and deduplication
 
 - One semantic group normally gets zero or one primary sound.
+- Coverage density is a user preference: full per-animation-cue coverage is acceptable when the palette is broad, reuse stays capped, adjacent cues differ, and each sound sits on its animation landing; the "too repetitive" failure only applies when a few presets are recycled.
 - Adjacent groups should not repeat the same strong sound without a deliberate motif.
 - Motion reuse is checked only between adjacent events inside the same content region. A shared non-empty `motif_id`, or `intentional_motif` on both events, is an intentional-repeat exemption; static or continuation layers are exempt. Different regions are not compared globally.
 - An existing sound covering the same visual event wins over a new insertion unless replacement is approved.

@@ -36,7 +36,7 @@ Demonstrated mappings in the current draft:
 - visible string: JSON strings in material `content` and sometimes `base_content`; `recognize_text` can mirror recognized subtitle text;
 - font: top-level `font_path`, `font_resource_id`, `fonts`, and nested `content.styles[].font`;
 - size: top-level `font_size` and nested `content.styles[].size`;
-- color: top-level `text_color` and nested `content.styles[].fill`;
+- color: the visible color renders from nested `content.styles[].fill.content.solid.color` (0–1 RGB); the top-level `text_color` alone does not render. Write the nested fill and keep `text_color` consistent, then verify in the UI;
 - shadow: top-level `has_shadow` and shadow fields plus nested `content.styles[].shadows`;
 - border: top-level `border_width`/`border_color` and possible nested style data;
 - position/scale: segment `clip.transform.x/y`, `clip.scale.x/y`, and version-dependent `uniform_scale`;

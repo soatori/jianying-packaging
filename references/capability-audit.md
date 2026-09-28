@@ -43,6 +43,9 @@ These are one family of operations parameterized by object type, prototype sourc
 - Treating every animated text layer as a sound event produced repetitive sound design. Model one sound event per semantic animation group and require a rationale.
 - Question punctuation is a composed layer, not part of ordinary text. Its track order and phrase-aligned start must be preserved.
 - File values and UI values may use different coordinate/scale systems. Infer conversion from a user-set reference and verify visually.
+- A hand-authored text material that omits `content.styles[].range` or carries an unsupported key crashes Jianying on open, and plan-level `validate` does not catch it. Always clone a segment that already opens cleanly and edit only its text/timing/transform.
+- Emphasis lines copied onto an upper track inherit the caption baseline, so co-timed rows overlap at the same Y. Move only the rows that genuinely overlap in time apart by the reference-derived row spacing; keep the first/single line on the baseline.
+- One sound per animation cue is acceptable when the palette is broad, reuse stays capped, adjacent cues differ, and each sound sits on the animation landing; the "repetitive sound" failure applies only when a few presets are recycled.
 
 ## Observed but not demonstrated as stable packaging execution
 
