@@ -63,6 +63,10 @@ These are families, not fixed asset names. Select an actual asset only after aud
 
 Every motion family uses a candidate pool rather than one hard-coded sound. A pool contains at least three distinct observed preset IDs before it can support an automatic final apply. Select one candidate after semantic fit, sound-form, leading-silence, dialogue-collision, and reuse checks. A candidate pool is never a request to layer all candidates.
 
+Count reuse across the whole plan before review, not only inside the per-preset validator. A human-readable plan table can silently schedule one preset more than its cap (the cap counts every event selecting it, including cross-group uses); when the count exceeds the cap, swap the least semantically-bound occurrence to a same-family different-timbre preset rather than dropping the sound.
+
+Leading silence of JianYing cache SFX must be measured, never trusted from the reference draft's source range (the reference may already skip it): run `ffmpeg -i <cache-file> -af silencedetect=noise=-35dB:d=0.03 -f null -` (retry `-45dB` when nothing is found); when the first `silence_start` is below 10ms, record `silence_end` as `leading_silence_us` in the catalog and apply the `skip` policy. Observed cache presets commonly carry 30–400ms of leading silence; unmeasured presets land audibly late against the animation even though the target range looks correct.
+
 Inline candidate lists are review evidence only. Final/apply plans must resolve `candidate_pool_ref`, `selected_preset_id`, and `catalog_ref` from the formal sound pool/catalog and the catalog record must be verified. If the pool is incomplete, keep the plan in review and emit `candidate_pool_incomplete`.
 
 Sound-form defaults are:

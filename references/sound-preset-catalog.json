@@ -1,5 +1,359 @@
 {
-  "catalog_version": "1.0",
-  "description": "Generic Jianying sound metadata only. Populate with observed preset records; do not invent IDs.",
-  "presets": []
+  "catalog_version": "1.1",
+  "description": "Observed JianYing SFX presets (generic platform assets). Populated from YASHIDA 9月21日/包装.",
+  "presets": [
+    {
+      "preset_id": "6896679424402476296",
+      "display_name": "鼠标点击声",
+      "duration_us": 365625,
+      "leading_silence_us": 121723,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679424402476296"
+    },
+    {
+      "preset_id": "6896683369166277895",
+      "display_name": "iphone消息提示音",
+      "duration_us": 2196000,
+      "leading_silence_us": 0,
+      "tail_duration_us": 0,
+      "sound_form": "decay",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track"
+      ],
+      "last_verified": "2026-09-23",
+      "resource_id": "6896683369166277895"
+    },
+    {
+      "preset_id": "6896679799100558600",
+      "display_name": "啾",
+      "duration_us": 1018750,
+      "leading_silence_us": 399637,
+      "tail_duration_us": 0,
+      "sound_form": "decay",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679799100558600"
+    },
+    {
+      "preset_id": "7015121347907030302",
+      "display_name": "咚",
+      "duration_us": 653063,
+      "leading_silence_us": 213562,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "7015121347907030302"
+    },
+    {
+      "preset_id": "6896680704210521358",
+      "display_name": "砰，拳击声",
+      "duration_us": 365625,
+      "leading_silence_us": 48888,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896680704210521358"
+    },
+    {
+      "preset_id": "6896679799100689672",
+      "display_name": "唰",
+      "duration_us": 470188,
+      "leading_silence_us": 66258,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679799100689672"
+    },
+    {
+      "preset_id": "6896683475655576839",
+      "display_name": "嘟咚，提示音1",
+      "duration_us": 653063,
+      "leading_silence_us": 90952,
+      "tail_duration_us": 0,
+      "sound_form": "multi_hit",
+      "default_trim_policy": "motion_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896683475655576839"
+    },
+    {
+      "preset_id": "6996448284516551973",
+      "display_name": "叮",
+      "duration_us": 757563,
+      "leading_silence_us": 0,
+      "tail_duration_us": 0,
+      "sound_form": "decay",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6996448284516551973"
+    },
+    {
+      "preset_id": "6896679322715786510",
+      "display_name": "啵1",
+      "duration_us": 339563,
+      "leading_silence_us": 66780,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679322715786510"
+    },
+    {
+      "preset_id": "6896679477816888584",
+      "display_name": "键盘打字（快）",
+      "duration_us": 12564875,
+      "leading_silence_us": 46553,
+      "tail_duration_us": 0,
+      "sound_form": "multi_hit",
+      "default_trim_policy": "motion_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679477816888584"
+    },
+    {
+      "preset_id": "6896679333541285133",
+      "display_name": "滴，提示音",
+      "duration_us": 992625,
+      "leading_silence_us": 59909,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679333541285133"
+    },
+    {
+      "preset_id": "6896680757318683911",
+      "display_name": "匕首",
+      "duration_us": 1436688,
+      "leading_silence_us": 0,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track"
+      ],
+      "last_verified": "2026-09-23",
+      "resource_id": "6896680757318683911"
+    },
+    {
+      "preset_id": "6896679852296899847",
+      "display_name": "打响指的声音",
+      "duration_us": 313375,
+      "leading_silence_us": 35895,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896679852296899847"
+    },
+    {
+      "preset_id": "6896679424402394376",
+      "display_name": "键盘打字长音效2",
+      "duration_us": 15568938,
+      "leading_silence_us": 0,
+      "tail_duration_us": 0,
+      "sound_form": "multi_hit",
+      "default_trim_policy": "motion_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track"
+      ],
+      "last_verified": "2026-09-23",
+      "resource_id": "6896679424402394376"
+    },
+    {
+      "preset_id": "6896680544193481992",
+      "display_name": "仙尘音效",
+      "duration_us": 2742813,
+      "leading_silence_us": 67596,
+      "tail_duration_us": 0,
+      "sound_form": "decay",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track",
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29"
+      ],
+      "last_verified": "2026-09-29",
+      "resource_id": "6896680544193481992"
+    },
+    {
+      "preset_id": "6966538907387301157",
+      "display_name": "正确",
+      "duration_us": 1934146,
+      "leading_silence_us": 764146,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "evidence": [
+        "observed in YASHIDA 9月21日/包装 audio track"
+      ],
+      "last_verified": "2026-09-23",
+      "resource_id": "6966538907387301157"
+    },
+    {
+      "preset_id": "6896680544193514760",
+      "display_name": "Ding，可爱提示音",
+      "duration_us": 1566666,
+      "leading_silence_us": 77006,
+      "tail_duration_us": 0,
+      "sound_form": "decay",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "resource_id": "6896680544193514760",
+      "evidence": [
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29",
+        "observed in JianYing sound material cache"
+      ],
+      "last_verified": "2026-09-29"
+    },
+    {
+      "preset_id": "6896679322715819278",
+      "display_name": "任务完成",
+      "duration_us": 1566666,
+      "leading_silence_us": 265873,
+      "tail_duration_us": 0,
+      "sound_form": "multi_hit",
+      "default_trim_policy": "motion_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "resource_id": "6896679322715819278",
+      "evidence": [
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29",
+        "observed in JianYing sound material cache"
+      ],
+      "last_verified": "2026-09-29"
+    },
+    {
+      "preset_id": "6896679370962849037",
+      "display_name": "拍照声3",
+      "duration_us": 800000,
+      "leading_silence_us": 197370,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "resource_id": "6896679370962849037",
+      "evidence": [
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29",
+        "observed in JianYing sound material cache"
+      ],
+      "last_verified": "2026-09-29"
+    },
+    {
+      "preset_id": "7002502489429789983",
+      "display_name": "页面切换",
+      "duration_us": 1066666,
+      "leading_silence_us": 0,
+      "tail_duration_us": 0,
+      "sound_form": "single_hit",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "none",
+      "status": "verified",
+      "resource_id": "7002502489429789983",
+      "evidence": [
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29",
+        "observed in JianYing sound material cache"
+      ],
+      "last_verified": "2026-09-29"
+    },
+    {
+      "preset_id": "6896680544193531144",
+      "display_name": "魔法音效",
+      "duration_us": 2000000,
+      "leading_silence_us": 30453,
+      "tail_duration_us": 0,
+      "sound_form": "decay",
+      "default_trim_policy": "text_span",
+      "leading_silence_policy": "skip",
+      "status": "verified",
+      "resource_id": "6896680544193531144",
+      "evidence": [
+        "ffmpeg silencedetect noise=-35/-45dB d=0.03 measured 2026-09-29",
+        "observed in JianYing sound material cache"
+      ],
+      "last_verified": "2026-09-29"
+    }
+  ]
 }

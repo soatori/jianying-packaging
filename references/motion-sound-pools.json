@@ -1,15 +1,226 @@
 {
-  "pool_version": "1.0",
-  "selection_policy": "choose_one_after_semantic_filter",
-  "pools": [
-    {"pool_id": "pop-default", "motion_family": "pop", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "reveal-default", "motion_family": "reveal", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "typing-default", "motion_family": "typing", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "sweep-default", "motion_family": "sweep", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "impact-default", "motion_family": "impact", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "mechanical_open-default", "motion_family": "mechanical_open", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "warning_pulse-default", "motion_family": "warning_pulse", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "confirmation-default", "motion_family": "confirmation", "min_candidates": 3, "candidates": [], "status": "candidate_pool_incomplete"},
-    {"pool_id": "none-default", "motion_family": "none", "min_candidates": 0, "candidates": [], "status": "not_applicable"}
-  ]
+ "pool_version": "1.1",
+ "selection_policy": "choose_one_after_semantic_filter",
+ "pools": [
+  {
+   "pool_id": "pop-default",
+   "motion_family": "pop",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6896679322715786510",
+     "rank": 1,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679424402476296",
+     "rank": 2,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679852296899847",
+     "rank": 3,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679333541285133",
+     "rank": 4,
+     "sound_form": "single_hit",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "reveal-default",
+   "motion_family": "reveal",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6996448284516551973",
+     "rank": 1,
+     "sound_form": "decay",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679333541285133",
+     "rank": 2,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896683475655576839",
+     "rank": 3,
+     "sound_form": "multi_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896683369166277895",
+     "rank": 4,
+     "sound_form": "decay",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "typing-default",
+   "motion_family": "typing",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6896679477816888584",
+     "rank": 1,
+     "sound_form": "multi_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679424402394376",
+     "rank": 2,
+     "sound_form": "multi_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679424402476296",
+     "rank": 3,
+     "sound_form": "single_hit",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "sweep-default",
+   "motion_family": "sweep",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6896679799100689672",
+     "rank": 1,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896680757318683911",
+     "rank": 2,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896679799100558600",
+     "rank": 3,
+     "sound_form": "decay",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "impact-default",
+   "motion_family": "impact",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "7015121347907030302",
+     "rank": 1,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896680704210521358",
+     "rank": 2,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896680757318683911",
+     "rank": 3,
+     "sound_form": "single_hit",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "mechanical_open-default",
+   "motion_family": "mechanical_open",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6896679424402476296",
+     "rank": 1,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896680757318683911",
+     "rank": 2,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "7015121347907030302",
+     "rank": 3,
+     "sound_form": "single_hit",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "warning_pulse-default",
+   "motion_family": "warning_pulse",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6896680704210521358",
+     "rank": 1,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "7015121347907030302",
+     "rank": 2,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896680757318683911",
+     "rank": 3,
+     "sound_form": "single_hit",
+     "status": "verified"
+    }
+   ]
+  },
+  {
+   "pool_id": "confirmation-default",
+   "motion_family": "confirmation",
+   "min_candidates": 3,
+   "status": "verified",
+   "candidates": [
+    {
+     "preset_id": "6966538907387301157",
+     "rank": 1,
+     "sound_form": "single_hit",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6996448284516551973",
+     "rank": 2,
+     "sound_form": "decay",
+     "status": "verified"
+    },
+    {
+     "preset_id": "6896680544193481992",
+     "rank": 3,
+     "sound_form": "decay",
+     "status": "verified"
+    }
+   ]
+  }
+ ]
 }
