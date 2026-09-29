@@ -38,6 +38,7 @@ Use level 1 for supportive emphasis, level 2 for important information, and leve
 
 ## Grouping
 
+- For speech-led short videos, a useful default emphasis granularity is 2–3 subtitle lines per group following the communication structure (hook, pain, claim, evidence, parameter, CTA); larger groups fragment review and smaller ones over-segment the hold layout. Yield to the user's confirmed grouping.
 - One semantic idea can span one or more text layers.
 - A two-line group should share one meaning and one overall visual landing point.
 - Preserve the original start of each spoken phrase unless an approved template intentionally stages the phrases.
@@ -92,6 +93,8 @@ Represent the visual event with:
 - `animation_end_us`
 
 Default the sound anchor to the perceptual landing point, usually `animation_peak_us` or `transition_peak_us`. Use group start only when the sound itself initiates the visible action.
+
+Deduplicate sound events by start time: layers that land on the same beat — a main emphasis line plus an auxiliary mark such as a question mark (which may share the group's text track and animation rather than a dedicated lower track) — get one sound for the beat, not one per layer.
 
 ## Restraint and deduplication
 

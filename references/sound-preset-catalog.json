@@ -1,6 +1,6 @@
 {
   "catalog_version": "1.1",
-  "description": "Observed JianYing SFX presets (generic platform assets). Populated from YASHIDA 9月21日/包装.",
+  "description": "Observed JianYing built-in SFX presets (generic platform assets), populated from user-approved emphasis drafts and measured with ffmpeg silencedetect.",
   "presets": [
     {
       "preset_id": "6896679424402476296",
