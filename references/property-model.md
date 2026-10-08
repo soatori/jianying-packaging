@@ -8,7 +8,7 @@ Every override is either absolute or relative:
 
 ```json
 {
-  "position_y": {"mode": "absolute", "value": -0.4427083333},
+  "position_y": {"mode": "absolute", "value": 0.0},
   "scale": {"mode": "relative", "delta": 0.15}
 }
 ```
@@ -27,11 +27,13 @@ An inherited template property is omitted. Never encode inheritance as a guessed
 | Audio | `volume`, `last_nonzero_volume`, `fade_in_us`, `fade_out_us`, `speed`, `channel_mapping`, `source_range`, `target_range` |
 | Composition | `track_id`, `track_order`, `render_index`, `track_render_index`, `visible`, `group_id` |
 
-## Evidence status by object
+## Representations to inspect by object
+
+Confirm each mapping against the target Jianying version and a saved prototype before writing.
 
 ### Text
 
-Demonstrated mappings in the current draft:
+Common representations to inspect include:
 
 - visible string: JSON strings in material `content` and sometimes `base_content`; `recognize_text` can mirror recognized subtitle text;
 - font: top-level `font_path`, `font_resource_id`, `fonts`, and nested `content.styles[].font`;
@@ -47,7 +49,7 @@ Do not update only one representation. Either clone the complete confirmed proto
 
 ### Video
 
-Observed in the current draft:
+Common representations to inspect include:
 
 - segment source and target timeranges;
 - segment `clip.scale`, `clip.transform`, and `flip`;
@@ -58,7 +60,7 @@ Rotation, opacity, masks, feather, blend, freeze, speed, and keyframes are seman
 
 ### Image, PNG, and sticker
 
-No standalone sticker track was present in the audited active timeline. Treat these as template/media objects:
+Treat these as version-dependent template/media objects. Inspect a working example in the target project:
 
 1. locate a working source segment created by Jianying;
 2. copy its material closure and track behavior;
@@ -69,7 +71,7 @@ Do not assume an image and sticker share the same material schema.
 
 ### Audio and sound effects
 
-Demonstrated mappings:
+Common representations to inspect include:
 
 - audio identity in material `name`, `path`, `resource_id`, `effect_id`, and source platform fields;
 - placement and crop in segment `target_timerange` and `source_timerange`;
@@ -80,9 +82,7 @@ Preserve the complete source segment and material closure. Override placement, s
 
 ## Coordinate conversion
 
-The audited vertical project stored a UI Y setting of `-850` as approximately `-850 / 1920 = -0.4427083333`. This is evidence of a normalized coordinate in that project, not a universal constant.
-
-For every project:
+The UI and stored coordinates may use different units, scales, origins, or sign conventions. Never copy a UI label directly into a raw JSON field. For every project:
 
 1. identify canvas dimensions;
 2. read a user-confirmed segment with known UI position;

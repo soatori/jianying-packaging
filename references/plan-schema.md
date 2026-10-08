@@ -155,7 +155,9 @@ For a non-`none` audio action, require:
 
 `text_span` requires `text_range`; `motion_span` requires a valid group motion event. A final apply plan must select a verified candidate from a pool containing at least three unique candidates. The pool is a choice set, not simultaneous playback.
 
-`text_span` also requires `target_range == text_range`; `motion_span` requires `target_range == motion_event.start_us..end_us`. Known leading silence requires an explicit `source_range`; `skip` must start after the silence, while `preserve` requires an override reason. Final/apply plans must resolve the candidate pool and selected preset from the formal sound catalog; inline candidate pools are review-only.
+`text_span` also requires `target_range == text_range`; `motion_span` requires `target_range == motion_event.start_us..end_us`. Known leading silence requires an explicit `source_range`; `skip` must start after the silence, while `preserve` requires an override reason. Final/apply plans must resolve the candidate pool and selected preset from a verified sound catalog.
+
+Sound catalogs and motion pools are case inputs. The skill package contains no ready-to-use project assets, and the validator does not load a hidden default catalog. For plans with sound, pass the current verified files explicitly: `python scripts/packaging_tool.py validate plan <plan.json> --catalog <case-catalog.json> --pools <case-pools.json>`. Missing inputs keep sound selection unresolved; do not substitute assets from another project.
 
 ## Safety gates
 

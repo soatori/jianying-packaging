@@ -21,6 +21,7 @@ from packaging_tools.subtitle_resolver import resolve_subtitle_anchor, resolve_t
 from packaging_tools.text_ops import check_text_replacement
 from packaging_tools.verification import verify_packaging_result
 from packaging_tools.validators.generic_content import check_generic_content
+from packaging_tool import _parser as packaging_parser
 from packaging_tool import main as packaging_main
 
 
@@ -75,6 +76,15 @@ class PackagingToolTests(unittest.TestCase):
     def test_verification_detects_source_fingerprint_change(self):
         report = verify_packaging_result({"source_timeline_hash": "a", "segments": []}, {"source_timeline_hash": "b", "segments": []}, {"groups": []})
         self.assertFalse(report["ok"])
+
+    def test_plan_cli_accepts_case_specific_sound_catalogs(self):
+        args = packaging_parser().parse_args([
+            "validate", "plan", "plan.json",
+            "--catalog", "case-catalog.json",
+            "--pools", "case-pools.json",
+        ])
+        self.assertEqual(args.catalog, "case-catalog.json")
+        self.assertEqual(args.pools, "case-pools.json")
 
     def test_cli_uses_json_by_default_and_returns_success(self):
         registry = Path(__file__).resolve().parents[1] / "references" / "layout-template-registry.json"

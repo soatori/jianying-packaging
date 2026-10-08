@@ -290,6 +290,21 @@ class ValidatePackagingPlanTests(unittest.TestCase):
             f"expected {fragment!r} in errors: {errors}",
         )
 
+    def test_plan_validation_does_not_load_bundled_sound_assets(self) -> None:
+        original_loader = VALIDATOR._load_reference_json
+
+        def reject_bundled_sound_data(name: str) -> dict[str, Any]:
+            if name in {"sound-preset-catalog.json", "motion-sound-pools.json"}:
+                raise AssertionError(f"project-specific sound data must be supplied per case: {name}")
+            return original_loader(name)
+
+        VALIDATOR._load_reference_json = reject_bundled_sound_data
+        try:
+            errors, _ = VALIDATOR.validate_plan(valid_plan())
+        finally:
+            VALIDATOR._load_reference_json = original_loader
+        self.assertEqual(errors, [])
+
     def test_valid_plan(self) -> None:
         errors, warnings = VALIDATOR.validate_plan(valid_plan())
         self.assertEqual(errors, [])

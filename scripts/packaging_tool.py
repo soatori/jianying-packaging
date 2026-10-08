@@ -101,7 +101,13 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     command = args.command
     if command == "validate":
         if args.kind == "plan":
-            report = validate_plan(unwrap_report(load_json(args.path)))
+            catalog = unwrap_report(load_json(args.catalog)) if args.catalog else None
+            pools = unwrap_report(load_json(args.pools)) if args.pools else None
+            report = validate_plan(
+                unwrap_report(load_json(args.path)),
+                sound_catalog=catalog,
+                sound_pools=pools,
+            )
             return result("packaging_plan_validation", data=report, errors=report.get("errors", []), warnings=report.get("warnings", []))
         if args.kind == "layout":
             report = validate_layout_registry(unwrap_report(load_json(args.path)))
@@ -209,6 +215,9 @@ def _parser() -> argparse.ArgumentParser:
     for kind, help_text in (("plan", "validate a packaging plan"), ("layout", "validate a layout registry"), ("learning", "validate a learning report")):
         item = validate_sub.add_parser(kind, help=help_text)
         item.add_argument("path")
+        if kind == "plan":
+            item.add_argument("--catalog", help="project-specific sound catalog JSON")
+            item.add_argument("--pools", help="project-specific motion sound pools JSON")
     sound = validate_sub.add_parser("sound", help="validate a sound catalog and optional pools")
     sound.add_argument("path")
     sound.add_argument("--pools")

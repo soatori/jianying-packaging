@@ -94,12 +94,15 @@ Represent the visual event with:
 
 Default the sound anchor to the perceptual landing point, usually `animation_peak_us` or `transition_peak_us`. Use group start only when the sound itself initiates the visible action.
 
+When skipping leading silence, source trimming and timeline placement are separate decisions. Let `audible_source_us` be the first audible transient, `source_start_us` the source in-point, and `anchor_us` the intended visual landing. Place the clip so `target_start_us + max(0, audible_source_us - source_start_us) = anchor_us`. Trimming the source in-point alone does not repair a stale target position. Verify the audible onset against the motion with waveform evidence and listening.
+
 Deduplicate sound events by start time: layers that land on the same beat — a main emphasis line plus an auxiliary mark such as a question mark (which may share the group's text track and animation rather than a dedicated lower track) — get one sound for the beat, not one per layer.
 
 ## Restraint and deduplication
 
 - One semantic group normally gets zero or one primary sound.
-- Coverage density is a user preference: full per-animation-cue coverage is acceptable when the palette is broad, reuse stays capped, adjacent cues differ, and each sound sits on its animation landing; the "too repetitive" failure only applies when a few presets are recycled.
+- Coverage density is a task input. When the brief requests full animation coverage, map each distinct motion event to one semantically matched sound; co-timed layers on one beat share one sound. Do not silently omit a required event under the default restraint rule. Record an unresolved gap only when a real dialogue collision, missing semantic match, or insufficient evidence prevents placement.
+- Treat repetition tolerance as a task input. Audit the configured window of consecutive audible SFX events in playback order within the requested content scope. If the brief gives no numeric window, compare adjacent events within each content region and apply the documented whole-plan reuse cap; do not use a global duplicate count across unrelated regions. Exempt only an explicitly approved motif.
 - Adjacent groups should not repeat the same strong sound without a deliberate motif.
 - Motion reuse is checked only between adjacent events inside the same content region. A shared non-empty `motif_id`, or `intentional_motif` on both events, is an intentional-repeat exemption; static or continuation layers are exempt. Different regions are not compared globally.
 - An existing sound covering the same visual event wins over a new insertion unless replacement is approved.

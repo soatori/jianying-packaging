@@ -838,9 +838,9 @@ def validate_plan(
         return ["root: plan must be a JSON object"], warnings
 
     if sound_catalog is None:
-        sound_catalog = _load_reference_json("sound-preset-catalog.json")
+        sound_catalog = {"presets": []}
     if sound_pools is None:
-        sound_pools = _load_reference_json("motion-sound-pools.json")
+        sound_pools = {"pools": []}
     if layout_registry is None:
         layout_registry = _load_reference_json("layout-template-registry.json")
 
