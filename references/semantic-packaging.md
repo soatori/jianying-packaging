@@ -2,7 +2,11 @@
 
 ## Context-first emphasis
 
-Evaluate the current subtitle unit together with the previous and next unit, the current topic, and the video's communication goal. Subtitle rows are timing containers, not necessarily semantic groups.
+Evaluate each complete sentence with the previous and next sentence, the current topic, and the video's communication goal. Subtitle rows are timing containers, not necessarily semantic groups.
+
+The default emphasis unit is a complete sentence. Preserve the sentence as supplied in the current subtitles. Highlight a word, character, or within-sentence fragment only when the user explicitly requests that granularity. Do not fragment a sentence just to increase the number of highlighted elements.
+
+For short videos, group one to three complete sentences when they share a message; two is a useful default when timing and meaning fit. Group size controls the composition, not the unit of text selection. Follow any explicit user grouping.
 
 Good emphasis candidates include:
 
@@ -10,10 +14,10 @@ Good emphasis candidates include:
 - numbers together with units, ranges, and conditions;
 - conclusions and the premise that makes them true;
 - contrast, correction, warning, risk, or unusually strong degree;
-- the short question phrase needed to frame an answer;
+- a complete question sentence needed to frame an answer;
 - one memorable CTA when it serves the video's goal.
 
-Do not emphasize a word merely because it is frequent, visually convenient, or already has an animation. Avoid highlighting every noun or every line.
+Do not emphasize an isolated word merely because it is frequent, visually convenient, or already has an animation. Avoid highlighting every noun or every sentence.
 
 ## Category and level
 
@@ -38,7 +42,7 @@ Use level 1 for supportive emphasis, level 2 for important information, and leve
 
 ## Grouping
 
-- For speech-led short videos, a useful default emphasis granularity is 2–3 subtitle lines per group following the communication structure (hook, pain, claim, evidence, parameter, CTA); larger groups fragment review and smaller ones over-segment the hold layout. Yield to the user's confirmed grouping.
+- Group 1–3 complete sentences when they share one idea; two is a useful default when timing and meaning fit. If subtitle rows split a sentence, the whole sentence remains the emphasis unit. Group size controls visual composition, not text granularity. Yield to the user's confirmed grouping.
 - One semantic idea can span one or more text layers.
 - A two-line group should share one meaning and one overall visual landing point.
 - Preserve the original start of each spoken phrase unless an approved template intentionally stages the phrases.

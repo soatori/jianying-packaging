@@ -9,7 +9,7 @@ This document also carries the text-track copy/staging operations formerly owned
 1. Ask where the staging surface belongs: the current working timeline (in-place, with backup) or a fresh clone. The clone is the safe default, but users often review only the timeline they had open and will report "nothing changed" when staging landed on a clone they never opened. Record the answer before writing.
 2. Clone the source timeline through `jianying-editor` (when a clone was chosen).
 3. Keep the source subtitle track unchanged and visible.
-4. Copy candidate sentence, phrase, word, or character text to an upper track.
+4. Copy complete candidate sentences to an upper track, preserving the approved sentence segmentation. Use phrase-, word-, or character-level fragments only when the user explicitly requests that granularity.
 5. Mark `packaging_staging=reviewing` and let the user review emphasis, wording, timing, segmentation, overlap, and obstruction.
 6. Record any user edits against the current saved staging timeline.
 7. Only after review approval apply templates, motion, effects, transitions, color, transform, background, and sound.

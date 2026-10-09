@@ -3,193 +3,71 @@ name: jianying-packaging
 description: "Use when a saved Jianying timeline needs semantic emphasis, flower text, group layout, motion, transitions, overlays, or synchronized sound effects. Use after speech and subtitle content are stable; do not decide speech cuts or rewrite meaning."
 ---
 
-# Jianying-Intelligent-Packaging
+# Jianying Packaging
 
-This is the presentation-intelligence layer for an approved, content-stable 剪映 timeline. It turns meaning into restrained visual and audio emphasis—flower text, upper-track text, templates, motion, transitions, overlays, and synchronized sound—while preserving the user's current manual corrections. It produces a reversible staging/packaging plan and delegates project I/O to `jianying-editor`.
+Use this skill after the spoken content and current subtitles are stable or approved. It plans semantic emphasis and its visual/audio presentation on a Jianying timeline.
 
-For user-specific learned packaging conventions, consult the applicable project-level reference when the request concerns a saved manual style, layout, emphasis grouping, animation, or sound. Keep those project-specific references outside this reusable skill.
+## Scope and authority
 
-## Positioning
+- Owns emphasis selection, flower text, group layout, templates, motion, transitions, overlays, and sound rationale tied to visible events.
+- jianying-rough-cut owns transcript correction, speech cuts, semantic rewriting, and subtitle alignment. Return content errors there.
+- jianying-editor owns draft probing, timeline reads/writes, cloning, decryption, backups, read-back, validation, and rollback. This skill's packaging CLI is read-only.
+- The latest saved, user-confirmed timeline is authoritative for text, timing, segmentation, styles, layer order, visibility, and manual sound choices. Re-read it before each pass; do not apply stale locators or restore removed choices.
+- Keep project names, copy, timecodes, IDs, assets, colors, and one-off style choices in external case references, not in this reusable skill.
 
-- **Entry gate:** content editing and subtitle alignment must be stable or approved, and the current Jianying page/draft must be saved before comparison or execution.
-- **Owns:** semantic emphasis, packaging categories and levels, visual presets, motion cues, template/asset selection, covered-subtitle presentation policy, and sound rationale tied to the actual animation or transition event.
-- **Produces:** a reviewable upper-track staging result and a validated packaging plan; execution changes are applied only to a clone unless the user explicitly authorizes in-place work.
-- **Handoff:** `jianying-editor` owns probing, decryption, timeline resolution, backups, atomic write-back, validation, read-back, and rollback.
-- **Does not own:** transcription, content cuts, filler or pause decisions, semantic rewriting, Q&A restructuring, draft recovery, or unsupported raw-property experimentation.
-- **Manual-reference precedence:** the current saved, user-confirmed timeline is authoritative for wording, timing, segmentation, style, visibility, layer order, and sound choices. Older plans, templates, ASR output, and automatic selections are evidence only and must not silently restore a removed choice.
-- **Rule scope:** reusable guidance in this skill must remain project-agnostic. Project names, concrete copy, sentence lists, timecodes, timeline or track IDs, and one-off brand/highlight decisions belong in project records, not in this skill.
+## Emphasis selection
 
-“Intelligent” means selecting emphasis from the surrounding meaning and communication goal, not decorating every subtitle or inferring effects from keyword frequency alone.
+Read each complete sentence with its neighboring context and the video's communication goal. Select by meaning, not keyword frequency.
 
-## Operating modes
+- The default emphasis unit is a complete sentence. Select and preserve the complete sentence as supplied in the current subtitles.
+- Select a word, character, or fragment inside a sentence only when the user explicitly requests that granularity. Do not fragment sentences just to make the emphasis feel denser.
+- Group related sentences into one visual event only when they share a message. For short videos, 1–3 complete sentences can form a group; two is a useful default when the timing and meaning fit.
+- Keep ordinary explanations restrained; distinguish supporting facts from core takeaways. Do not promote every brand, number, or technical term automatically.
+- Do not change spoken meaning in the packaging layer. Display-only edits such as line breaks or approved shortening remain tied to the complete source sentence and require review.
 
-- `analysis`: read-only packaging audit. Analyze flower-text layers, templates, motion, transitions, relative layout, sound choices, and discrepancies. Do not clone a timeline, write a draft, add sound, or execute a template.
-- `staging`: create only the approved reversible upper-track review surface. Preserve source subtitles and do not add final templates or sound effects.
-- `final`: produce or execute an approved packaging plan after final-subtitle authority, staging, remapping, and safety gates are satisfied.
+For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).
 
-If the user asks to analyze or not modify, use `analysis`. A packaging report may contain project-specific observations, but reusable references, registries, and tests must remain generic.
+## Modes and workflow
 
-## Boundaries
+- **analysis:** read-only audit; report observed text, layout, template, motion, transition, and sound issues.
+- **staging:** prepare a reversible upper-track review surface; leave the original subtitle track unchanged and visible for review, and omit final sound/effect writes.
+- **final:** prepare or apply an approved packaging plan after staging, subtitle authority, and remapping gates are satisfied.
 
-- Use `jianying-rough-cut` or another content-analysis workflow to decide cuts, fillers, repetition, speaker roles, or Q&A structure. This skill does not change spoken content.
-- Require a stable/approved content pass and an approved subtitle-alignment plan before formal packaging. If packaging reveals a semantic error, return it to `jianying-rough-cut`.
-- Track the shared workflow states when coordinating a multi-skill run. The handoff table is the document named `workflow-state` inside the sibling skill `jianying-rough-cut` (open that skill’s references folder after it is installed). Do not treat a missing local path as a defect in this skill.
-- This skill assumes `jianying-rough-cut` and `jianying-editor` are installed as sibling skills by name.
-- Use `jianying-editor` for project probing, timeline resolution, decryption, replica handling, backups, atomic write-back, validation, and rollback. Do not create a second project I/O implementation here.
-- Treat raw Jianying fields as version-dependent. Position, color, and animation parameters must be derived from the user-approved reference draft's emphasis-track measured values and applied group-by-group. Do not invent or extrapolate from abstract rules when a reference is available.
-- Do not claim an object/property operation is supported merely because a field name exists. Consult [references/capability-audit.md](references/capability-audit.md) for evidence status.
-- Read [references/timeline-comparison.md](../jianying-rough-cut/references/timeline-comparison.md) when a source and target order differ; never reuse old effect timecodes without a verified semantic remap.
+Choose analysis for review-only requests. Staging or final writes require explicit user authorization; a rough-cut approval alone does not authorize packaging writes.
 
-## Selection and layer rules
+1. Confirm the current draft/timeline, saved state, requested scope, and whether the user authorized execution.
+2. Before staging or final packaging, require content_pass to be stable or approved and subtitle_alignment to be approved. Read the final subtitles with neighboring context. Inspect the saved timeline through jianying-editor, compare it with the latest manual reference, and preserve manual choices unless the user asks for a change.
+3. If a visual style or layout choice is still open, show a comparison preview before writing. In staging, let the user review selected sentences, grouping, timing, overlap, and obstruction.
+4. Group related text and graphic layers by perceptual event. Resolve layout from the approved subtitle transform and a verified reference; do not guess raw Jianying coordinates, color fields, or effect IDs.
+5. Build and validate a plan with `python scripts/packaging_tool.py validate plan <plan.json>`. When sound is in scope, supply the current case's verified --catalog <case-catalog.json> and --pools <case-pools.json>; missing inputs remain unresolved and never fall back to bundled assets.
+6. Apply only an approved plan through jianying-editor. Clone by default; honor an explicit request for in-place editing. Read back the result, validate it against the approved plan and source, and inspect ambiguous visual/audio results in Jianying after reopening.
 
-- Select emphasis by semantic event and communication role, not by keyword frequency alone. Structural cues such as section labels, process markers, or contrast framing may be valid emphasis when they belong to the approved spoken context.
-- For two phrases that form one semantic event, the first phrase may remain visible through the end of the second phrase, and the second phrase may occupy a higher text layer. Derive both endpoints from the current saved segments; do not hardcode timecodes, merge spoken units, or rewrite their meaning.
-- Preserve the user's observed layer order and group relationships. Do not assume a fixed number of text tracks or a fixed `track_render_index`; resolve the current timeline and use relative, reviewable layout where possible.
-- Keep brands, models, numbers, and technical terms accurate in the underlying subtitles, but do not promote every protected term to flower text. Highlight selection remains an explicit, user-confirmed packaging decision.
-- Default each flower-text material to one whole-line color. Do not split a single line into per-word or per-character color ranges unless the approved reference draft or an explicit user instruction does so; per-word coloring is treated as an error state.
-- Spread motion across the full set of reference-verified in-animation presets. Concentrating on a few presets is a repetition defect, not a style.
-- The narration track must not carry any animation slot. Empty or populated, an animation slot on narration is a residual error to remove. This rule is track-role-based and does not apply to emphasis-track tail stubs described in the extension-hold pattern (see Planning model).
+When requesting a clone, preserve the source labels required by the active project's naming convention and give the copy a purpose-specific, unique name. The naming tokens and suffix format come from the active project/editor workflow; this skill does not prescribe literal sample names or a timezone.
 
-## Required workflow
+## Motion, sound, and review gates
 
-1. Confirm the explicit draft path, source timeline, packaging goal, and whether the request is review-only or execution. Confirm whether staging lands in the current working timeline (in-place, backed up) or a fresh clone: users often only open the timeline they had open and report "nothing changed" when work landed on an unopened clone. Ask for/save the current Jianying page before comparing files so unsaved manual edits are not lost. For style, layout, or stagger decisions, first present alternatives as a standalone HTML comparison preview and only write to the draft after the user picks.
-2. Load `jianying-editor` and run `probe`, `inspect`, and `validate` on the source timeline. Resolve hybrid-layout conflicts explicitly.
-3. Compare the current source with the latest user-confirmed manual reference. Preserve its timing, wording, segmentation, styles, layer order, visibility choices, overlay media, and sound choices unless the user requests a change. At every analysis, staging, final, or rework pass, re-read the current saved timeline from scratch; do not reuse a decoded snapshot, segment index, or locator cache from a prior pass. Between passes the user commonly re-groups tracks, changes segment timing, or edits wording, and stale locators will target the wrong rows or silently overwrite manual corrections.
-4. Confirm `subtitle_alignment=approved` and read the finalized subtitles with at least the previous and next semantic unit. Identify emphasis by meaning, not keyword frequency. Use [references/semantic-packaging.md](references/semantic-packaging.md).
-5. In `analysis` mode, stop before cloning and report the observed template, motion, transition, relative-layout, sound, and text discrepancies. In `staging` or `final` mode, prepare the working timeline (clone unless the user chose in-place) and copy candidate sentence/word/character text to an upper review track. Keep the original subtitle track visible while the user reviews emphasis, wording, timing, segmentation, overlap, and obstruction. Track-copy/disable mechanics (independent material UUIDs, odd/even upper-track split for holds, native segment `"visible": false` disabling, layout step and stagger geometry, write-back/editor-state pitfalls) are in [references/staging-and-covered-subtitles.md](references/staging-and-covered-subtitles.md), which now also carries the former standalone `jianying-track-copy-staging` skill.
-6. After staging review, group related text layers into one packaging event. Assign a semantic category, emphasis level, visual preset, motion cue, and optional sound rationale.
-7. Inventory candidate templates and reusable assets from the current draft, template timelines, subdrafts, or local material indexes. Record exact source and target timeline/track/segment/material IDs; never guess effect IDs. Every motion preset must cite the reference source it came from, and a motion that cannot be traced to that source is fabricated and forbidden. Check font health and same-group fallback before accepting a flower-text preset.
-8. Produce a packaging plan and validate it with `python scripts/packaging_tool.py validate plan <plan.json>`. When the plan includes sound, pass the current case data explicitly with `--catalog <case-catalog.json> --pools <case-pools.json>`. Use the same CLI for layout, sound-catalog, generic-content, preflight, snapshot, diff, resolve, layers, motion-check, audio-audit, sound-check, and verify operations. Follow [references/plan-schema.md](references/plan-schema.md) and the packaging regression tests.
-9. Unless the user has explicitly authorized execution, stop after the staging or final plan and request review. Approval of content cutting does not imply approval of packaging writes.
-10. For execution, default to cloning the source timeline and applying the smallest approved changes to the clone. Switch to in-place editing of the original timeline only when the user explicitly asks for it (e.g. "直接编辑/原地"): the clone default is a safety margin, not an override of an explicit user instruction. When the user later asks to remove a working clone, delete it and keep the edited timeline authoritative. Follow the execution rules below.
-11. Validate in memory, write through `jianying-editor`, decrypt/read back every confirmed replica, validate again, and compare the result against both the approved plan and the source timeline.
-12. Finalize with the export canary: after writes, confirm the timeline that actually holds the finished packaging is the one JianYing opens and exports. Cross-check `timeline_layout.json` activeTimeline, the timeline index `main_timeline_id`, and the root active-mirror content ID; when the finished result sits on a different timeline, report the ambiguity and only promote it with explicit approval (writes to a non-primary timeline do not refresh the root mirror). See `jianying-editor` references/architecture-and-versioning.md §Finalization and export canary.
-13. Visually inspect ambiguous style, coordinate, layer, animation, text-fit, transition, effect, color, position, rotation, and background results in Jianying after the project is reopened. File-level values alone do not prove the UI appearance.
+- Keep motion traceable to a user-approved template or verified source, and vary among reference-backed choices within the plan reuse cap. Do not invent support for raw properties from field names alone.
+- Treat each perceptual motion beat as an event. Co-timed layers share one event and normally one primary sound; separate entrances or moving marks are separate events.
+- Match sound to event meaning and motion. Follow the task's full/selective coverage and repetition policy; do not infer coverage from segment/audio counts. Align the first audible transient to the perceptual landing and account for measured leading silence.
+- Classify music, ambience, dialogue, SFX, and unknown audio separately. Resolve unknown roles and dialogue collisions by review.
+- Check animated marks and overlapping text at entry, peak, and exit; static transforms do not prove readability.
+- Preserve the narration track's role and do not attach emphasis animation to it. Follow approved layer order and extension-hold behavior.
 
-## Tool layer
+## Final review
 
-`scripts/packaging_tool.py` is the read-only packaging CLI. Its importable functions live under `scripts/packaging_tools/`; they normalize observations, compare a saved manual reference, discover dynamic layers, audit motion reuse and audio roles, resolve subtitle/text hashes and relative layouts, inspect asset/sound evidence, emit external-case `learning_report` records, and verify editor read-back reports. It never calls `clone` or `apply` and never writes a Jianying draft. Use `--format text` only for a human-readable summary; JSON is the default output.
+Before reporting a package as verified, confirm the complete approved text is intact; each group fits and remains readable within the safe area; motion and templates are traceable; event-level sound coverage, audible onset, repetition, and dialogue collisions satisfy the request; and editor read-back matches the approved plan. File-level validation does not prove visual or listening quality.
 
-Every command returns a machine-readable report envelope with `data` plus `errors`, `input_errors`, and `warnings`. The next command may consume the complete previous report directly; it unwraps `data` automatically and also accepts raw data JSON. Exit codes are `0` for usable reports including review warnings, `1` for validation/safety/evidence blocks, and `2` for JSON, path, argument, or output-file errors. Schema 1.2 uses `group.visual`; `visuals` and `visual_operations` are read-only compatibility aliases and conflicting aliases stop resolution. The tool layer is fail-closed for missing/duplicate locators, order changes, hash mismatches, unresolved anchors, layout collisions, sound evidence, and unexpected read-back changes.
+Use [references/motion-audio-audit.md](references/motion-audio-audit.md) for event coverage and audio evidence; use [references/layout-templates.md](references/layout-templates.md) for relative slots and animated readability.
 
-## Planning model
+## Reference routing
 
-Default strategies below yield to the user-approved reference draft's measured values and to any explicit user direction whenever they conflict.
+Read only what the requested operation needs:
 
-Use three independent decisions for every group:
+- Track copying, covered subtitles, or staging: [references/staging-and-covered-subtitles.md](references/staging-and-covered-subtitles.md).
+- Layout or animated positioning: [references/layout-templates.md](references/layout-templates.md) and [references/property-model.md](references/property-model.md).
+- Template capabilities and provenance: [references/capability-audit.md](references/capability-audit.md) and [references/flower-text-templates.md](references/flower-text-templates.md).
+- Plan fields, gates, and validation behavior: [references/plan-schema.md](references/plan-schema.md).
+- Sound choice, trim, and synchronization: [references/semantic-packaging.md](references/semantic-packaging.md) and [references/motion-audio-audit.md](references/motion-audio-audit.md).
+- Cross-skill state or changed timeline order: [references/workflow-state.md](../jianying-rough-cut/references/workflow-state.md) and [references/timeline-comparison.md](../jianying-rough-cut/references/timeline-comparison.md).
 
-- `category`: what the text means, such as question, parameter, brand, technical term, conclusion, warning, contrast, CTA, or ordinary explanation.
-- `level`: how strongly it should be emphasized. Use 1 for restrained support, 2 for important information, and 3 only for the few core takeaways.
-- `motion`: what visibly happens, such as pop, reveal, typing, sweep, impact, mechanical open, or no motion.
-
-For position-sensitive rows, prefer a non-displacing intro; a displacement-based intro shifts the landing point and conflicts with manually set positions.
-
-The visual preset follows category and level. The sound follows the actual motion cue plus spoken meaning; it does not follow text-layer count.
-
-Default each material to a white text base and reserve the single accent color exclusively for level-3 core sentences. Source the exact accent from the reference draft or explicit user direction whenever a reference exists. When no approved reference is available, fall back to the generic white-plus-yellow family instead of guessing an arbitrary hue: white base, a soft gold (≈ `[1, 0.91, 0.5]`) for keywords, and a brighter gold for the single top-priority conclusion. This is a default strategy, not a mandate — it yields immediately to the reference's measured accent, to an explicit user color, and to per-project brand hexes or red/blue warning accents, which stay case-reference values, never skill defaults. Unless the reference draft's measured values show distinct accent tiers, use one accent color across the whole packaging; two-tier accents without measured provenance read as inconsistent color codes. A group whose lines all share one color while the group also carries a lead-in sentence is a differentiation error: keep the lead-in on the white base and reserve the accent for the semantic core, following the reference's lead-in/accent split. When auditing color consistency, compare RGB channels with a float32 tolerance (≈1e-6): `[1,1,0.4]` and `[1.0,1.0,0.4000000059604645]` are the same stored color, and exact-string comparison reports false "uneven color" findings.
-
-Motion reuse is audited within playback-local adjacent content regions, not as a whole-film duplicate count. Preserve an explicit `content_region_id` (or compatible `semantic_region`) when available; a shared motif is exempt only inside that same region. Within one packaging, motion must vary semantically across groups; the only exception is when the reference draft establishes a single consistent intro.
-
-Every plan group must carry its semantic `context`, `category`, `level`, and `motion`. For an animated group, record the resolved motion event (`start_us`, `peak_us`, and `end_us`) so an audio anchor can be audited. Every executable visual or audio operation must identify its target; copied templates and assets must identify their source. The plan validator is the gate for these requirements.
-
-Within a multi-line emphasis group, all member lines must share the same on-screen start; verify co-timing after resolving each group's segment references. When only some lines animate in and others hold static, the group visually fragments into separate events rather than one composition.
-
-In schema 1.2, every final visual group also carries `semantic_unit_refs`, `subtitle_anchor`, `remap_status`, and a `layout` object. The layout is group-level, uses a runtime `X0/Y0` anchor, and resolves arbitrary slot relationships through relative offsets. Do not assign independent absolute coordinates to each text layer.
-
-Schema 1.2 also carries an `execution.context_contract`. It is the context handoff used by `jianying-editor` until a runtime consumer exists: resolve the final-subtitle `X0/Y0`, calculate each group atomically, select one catalog-backed sound, require read-back, and stop on every declared safety condition. Do not describe a context-only handoff as automated editor support.
-
-The extension-hold pattern is intentional: a hold spans two segments where the head carries the intro animation and the tail carries an empty animation stub. Do not flag the tail stub as an error on emphasis tracks. The narration-track animation-slot ban remains absolute.
-
-## Template and text execution rules
-
-- Prefer cloning a complete template segment and its referenced material closure. Generate new IDs and replace exact references throughout the copied closure.
-- Inherit template properties by default. Override only approved fields such as text, timing, position, or one explicit style variable.
-- Distinguish absolute assignment from relative adjustment. Represent them as `{mode: absolute, value: ...}` and `{mode: relative, delta: ...}`.
-- When replacing text, synchronize every representation that the source material actually uses, especially `content`, `base_content`, `recognize_text`, and every style range. A visible style may be split between top-level material fields and nested `content.styles`.
-- Typo correction belongs to the content layer. The packaging layer may fix a misspelling only on its own upper-track emphasis copy after explicit approval, synchronizing every text representation; the source subtitle segment stays untouched until `jianying-rough-cut` or the user approves the wording change there.
-- Derive start/end points from the current saved subtitle or animation event, not rounded planning decimals. Keep each group on separate non-overlapping tracks where required.
-- Emphasis lines copied onto an upper track inherit the caption baseline. Anchor the first/single line on that baseline and separate only the lines that genuinely overlap in time, by the reference-derived row spacing; use a two-column block near the safe-zone edge for dense multi-name groups instead of an ever-taller single stack.
-- For text that covers a subtitle, preserve the original on the staging/source timeline. `enable=false` is not a reliable hide operation; only disable after read-back proves the current version honors it, or delete on the cloned target after explicit approval and rollback preparation. Never mutate the source to achieve coverage.
-- Treat display-only shortening, line breaks, punctuation, emphasis range, and cover relations as `light_content_ops`. Do not delete, reorder, or semantically rewrite complete spoken units here; return those decisions to `jianying-rough-cut`.
-- Treat layer order as part of the template. For the established question template, place the question-mark track below the group's text tracks and start the mark with the second phrase; for a one-phrase question, start it with that phrase. For the auxiliary question-mark layer, default to white color, a semi-transparent global alpha, an enlarged scale, and a non-displacing intro; take the specific values from the reference draft. For auxiliary marks, badges, and symbols, verify rendered bounds and text readability at animation entry, perceptual peak, and exit; base transforms alone are insufficient when the mark moves or scales. See [references/layout-templates.md](references/layout-templates.md#animated-auxiliary-marks-and-text-readability).
-- Use a confirmed prototype to convert UI coordinates to stored normalized coordinates. Do not hardcode canvas height or assume that the UI number equals the raw JSON value. When a visible emphasis copy has a confirmed correct subtitle counterpart on the same timeline, use that segment’s stored transform as the position reference; verify identity and timing, change only the requested coordinate, and never write a UI label directly into a normalized JSON field. Calibrate from a prototype only when no confirmed paired reference exists.
-- Run a geometry pre-check before proposing side-by-side (left/right staggered) lines: calibrate glyph width from a rendered screenshot rather than formulas (CJK glyph ≈ 0.15 normalized x-units at font size 10; ±1 = canvas edges). Two simultaneously visible lines may be staggered only while their combined glyph widths fit the safe canvas width (≈ 12 CJK glyphs at fs10); otherwise keep the group centered and raise lines vertically.
-- Prefer `relative_template` layout with named slots, `relative_to`, `inherit_transform_from`, safe-zone constraints, and a `manual_review` fallback. Base templates include centered, stacked, side-pair, overlay/replace, attached-mark, and composite layouts; extensions are data-only compositions. `legacy_absolute` requires explicit visual verification and must not be silently promoted to final apply.
-- Derive `X0` and `Y0` from the current final subtitle reference at runtime. Static continuation text inherits the transform of its source slot. Validate text bounds, collisions, and overflow after resolving the whole group. For co-timed rows, derive the minimum inter-row spacing from the reference draft's measured values; never guess or reuse a fixed number.
-- In schema 1.2, every layout slot declares `ref_type`: subtitle-unit refs must belong to the current semantic group, while auxiliary marks must be declared in `auxiliary_text_refs`. Parent templates resolve before child overrides; cyclic inheritance is invalid.
-- In schema 1.2, every final text operation must bind `text_ref` and a SHA-256 UTF-8 `text_hash` to the approved `source.final_subtitle_units` manifest. If the actual flower-text text or hash differs, mark `text_mismatch` and stop final/apply.
-
-Read [references/property-model.md](references/property-model.md) before changing raw properties or creating a reusable preset. Use [references/flower-text-templates.md](references/flower-text-templates.md) only for the generic template contract. User-saved flower-text composites and template provenance must be supplied as an external project case reference; they are not bundled in this reusable Skill.
-
-For reusable relative geometry, read [references/layout-templates.md](references/layout-templates.md) and [references/layout-template-registry.json](references/layout-template-registry.json). Build sound catalogs and candidate pools from the current project’s verified media inventory or an approved case reference; keep these inputs outside the skill package. Read [references/plan-schema.md](references/plan-schema.md) for their shape and pass them explicitly to plan validation.
-
-## Sound execution rules
-
-- At most one primary sound per semantic animation group unless the approved design explicitly requires a layer.
-- Align to the perceptual landing point (`animation_peak` or `transition_peak` when that is where the motion lands); do not auto-align every sound to segment start. Fail closed when duration, mask, or dialogue collision is unresolved.
-- Select motion family → sound family → reuse cap (default 3) → semantic special slot. The canonical table and selection detail live in [references/semantic-packaging.md](references/semantic-packaging.md#sound-choice). Do not infer a sound from a cache md5. Preserve manual replacements/deletions and record rationale.
-- Select one verified candidate from the current project’s explicitly supplied pool; a usable motion family has at least three unique candidates. Keep the pool as alternatives, never simultaneous playback. Use its paired project catalog to classify `single_hit`, `decay`, `multi_hit`, `loop`, `ambience`, or `unknown` and to honor measured leading-silence metadata. Never reuse an asset list from an unrelated project. Before final review, map each task-required motion event to its SFX event in the event-level matrix; do not infer coverage from segment/audio totals. See [references/motion-audio-audit.md](references/motion-audio-audit.md).
-- Count each preset's total selections across the whole plan (including review-mode tables) before presenting it; the reuse cap binds the plan, not just the validator. When a preset exceeds its cap, swap the least semantically-bound occurrence to a same-family different-timbre preset instead of dropping the sound.
-- Measure leading silence of JianYing cache sound presets with `ffmpeg silencedetect` (see [references/semantic-packaging.md](references/semantic-packaging.md#sound-choice)); never inherit `leading_silence_us = 0` from a reference draft's already-trimmed source range, and record measured offsets in the catalog so sounds land on the animation instead of 30–400ms late.
-- Keep audio-audit events with an unknown role separate from SFX and route them to review; do not silently count them as effects.
-- Derive trim from the verified sound form and the approved event span: `single_hit`/`decay` use the text span; multi-hit/typing sounds use the motion span. Preserve the intended transient and tail while respecting source duration and event bounds. Skip known leading silence unless preservation is explicitly justified. Do not stretch or loop without catalog evidence. Record motion type, spoken function, visual landing, selection basis, reuse check, and dialogue-collision check.
-- When a future dialogue loudness target is specified before the voice track is mixed, set SFX gain in relation to that planned dialogue level. Do not copy the dialogue target as the SFX gain or invent a fixed SFX level. If no dialogue target exists, leave final balancing for listening review.
-- Always write an explicit `source_timerange.start` on generated sound segments. JianYing may omit the key on re-save, and a missing start silently means "from zero", re-introducing the leading silence that was measured away.
-- `text_span` must use the matching text and target ranges; `motion_span` must use the parsed motion-event range. A known leading silence requires an explicit source range. Inline candidate pools are for review only; final/apply must resolve a verified preset from the formal catalog and pool, including when a final plan is still in review mode.
-
-## Landing a schema-1.2 plan onto a clone
-
-The plan-application entry point in `jianying-editor` does not consume packaging plans. Landing an approved schema-1.2 packaging plan requires a project-local script that calls the editor primitives directly; do not build a second project I/O implementation around them.
-
-- Clone with `clone_timeline`: segment, track, and material UUIDs are preserved, so every locator in the plan remains valid on the clone without remapping.
-- Decode the clone, apply only the approved group changes, then write through the transactional `_write_content` and validate the read-back.
-- Color: flower-text color must be written inside the material `content` JSON string — parse it, set `styles[].fill.content.solid.color` with 0–1 RGB values, and re-serialize the string. Writing only the top-level `text_color` field does not render and is an invalid write.
-- In-animations: harvest the full set of in-animations from the approved reference draft, not a few favorites; clone each `sticker_animation` material verbatim (including its local cache references) under a new UUID and attach it to the target segment's `extra_material_refs`. Harvesting only a small subset produces repetitive motion and rework.
-- Motion distribution: the first and second sentences within a group use different intros, adjacent groups use different intros, and a single preset is subject to a reuse cap.
-- Verification: match applied changes by `material_id`, never by text — text matching collides with same-worded narration lines on lower tracks.
-- Rework cleanup: before re-applying, delete the animation materials previously added by the script from `material_animations` and remove their references from the target segments' `extra_material_refs`; leftover references are residual empty animation slots.
-
-## Timeline naming on creation or cloning
-
-Whenever this workflow creates a fresh timeline or clones a source into a working copy (including the rough-cut copy applied through the `jianying-editor` handoff), name it `<源名>·<用途>·<时间戳>`:
-
-- `源名`: the source timeline's base name, kept verbatim including any leading serial number (e.g. `01智能`), so downstream batch matching by序号 still resolves. Never strip or renumber it here.
-- `用途`: a single purpose token for the new timeline — `粗剪` (rough-cut/edit copy), `重点句` (emphasis/flower-text clone), `包装` (final packaging clone), or `音效` (sound-only pass). A genuinely new purpose gets its own token; do not overload an existing one.
-- `时间戳`: creation time as compact `MMDD-HHMM` in the operator's local zone (e.g. Asia/Shanghai). Two clones sharing the same `源名`+`用途` in one session are told apart by this token, never by an appended `(2)`.
-
-Concrete `源名` strings, copy, and serial numbers stay in the external project case reference; only this `<源名>·<用途>·<时间戳>` format is reusable guidance.
-
-## Safe execution implementation
-
-Create project-specific mutation code outside this skill. It may import reusable pure helpers from the approved plan, but project reads/writes must use the canonical `jianying-editor` implementation.
-
-Before a write:
-
-- recommend closing Jianying and its tray/background process before a write; if it remains open, first ensure Jianying has saved and released the draft and treat the runtime warning as a review point;
-- clone the source timeline unless the user explicitly requested in-place changes; an apply plan may bypass this only with an explicit authorization note and `execution.allow_in_place: true`;
-- before a re-application, clear the animation materials added by the previous run and their `extra_material_refs` references (see "Landing a schema-1.2 plan onto a clone");
-- keep `execution.preserve_manual_edits: true` unless the user explicitly authorizes overwriting them, recorded by `execution.allow_manual_overwrite: true` and an authorization note;
-- fail closed when a template, material closure, target segment, or coordinate conversion is ambiguous;
-- fail closed when the alignment precondition, staging review, font health, sound path, or supported capability evidence is missing;
-- fail closed when the schema 1.2 context contract is missing, a layout reference is undeclared, a sound range is inconsistent, or a formal sound catalog/pool cannot be resolved;
-- preserve unknown fields and untouched tracks.
-- require a schema 1.2 final-subtitle reference, verified/not-required remap, clone/source-preservation settings, and `pre_write_backup=required`; these are execution gates, not editor implementation details.
-
-After a write, report the source and target timeline IDs/names, backup location, changed groups with reasons, files written, validation/read-back result, visual checks still needed, and rollback path. A validation failure that only reports a `draft_content.json.bak` (writable-backup) replica differing from the primary is benign — JianYing rotates its own backup on every save; report it as a note, not a blocker.
-
-## Review checklist
-
-- Every emphasized phrase still means the same thing as the approved subtitle context.
-- No manual timing, wording, layer, style, overlay, or sound choice changed without an explicit plan item.
-- Text has no missing characters; style ranges cover the full replacement text; `content` and `base_content` agree where both exist.
-- Text fits the approved line-count and per-line limit without unwanted wrapping.
-- Preset source, target locators, and overrides are traceable.
-- Motion variety holds: first and second sentences in a group use different intros, adjacent groups differ, and no single preset exceeds its reuse cap.
-- Auxiliary marks remain readable at animation entry, perceptual peak, and exit; intentional attachment does not prove overlapping text is legible.
-- Layer order and group timing reproduce the intended composition.
-- Evaluate sound coverage against the brief’s stated scope; map each required distinct animation event to one semantically matched sound or record an unresolved gap. Co-timed layers on one beat share one sound.
-- Each sound has a motion/content rationale, is synchronized to the perceptual event, avoids unnecessary repetition, and does not collide with dialogue or another sound.
-- Whole-plan sound preset selection counts are within the reuse cap, and every selected cache preset has a measured leading silence with the source range starting at or after it. Check repetition at the local playback scope and window stated in the brief; when none is specified, compare adjacent audible events within each content region.
-- Accent color is a single tier unless the reference draft measures multiple tiers, and no multi-line group renders entirely in one accent color while containing a lead-in sentence.
-- Source timeline remains intact; target replicas agree; final `jianying-editor validate` is successful.
-- Packaging staging is reversible, covered subtitle policy is explicit, and no semantic content decision has been silently made in the packaging layer.
+Packaging plans and audit tools do not write Jianying drafts. All draft operations and export-target checks remain with jianying-editor.
