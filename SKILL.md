@@ -149,6 +149,16 @@ The plan-application entry point in `jianying-editor` does not consume packaging
 - Verification: match applied changes by `material_id`, never by text — text matching collides with same-worded narration lines on lower tracks.
 - Rework cleanup: before re-applying, delete the animation materials previously added by the script from `material_animations` and remove their references from the target segments' `extra_material_refs`; leftover references are residual empty animation slots.
 
+## Timeline naming on creation or cloning
+
+Whenever this workflow creates a fresh timeline or clones a source into a working copy (including the rough-cut copy applied through the `jianying-editor` handoff), name it `<源名>·<用途>·<时间戳>`:
+
+- `源名`: the source timeline's base name, kept verbatim including any leading serial number (e.g. `01智能`), so downstream batch matching by序号 still resolves. Never strip or renumber it here.
+- `用途`: a single purpose token for the new timeline — `粗剪` (rough-cut/edit copy), `重点句` (emphasis/flower-text clone), `包装` (final packaging clone), or `音效` (sound-only pass). A genuinely new purpose gets its own token; do not overload an existing one.
+- `时间戳`: creation time as compact `MMDD-HHMM` in the operator's local zone (e.g. Asia/Shanghai). Two clones sharing the same `源名`+`用途` in one session are told apart by this token, never by an appended `(2)`.
+
+Concrete `源名` strings, copy, and serial numbers stay in the external project case reference; only this `<源名>·<用途>·<时间戳>` format is reusable guidance.
+
 ## Safe execution implementation
 
 Create project-specific mutation code outside this skill. It may import reusable pure helpers from the approved plan, but project reads/writes must use the canonical `jianying-editor` implementation.
