@@ -44,3 +44,19 @@ Inheritance is resolved from the root parent toward the child. Parent slots are 
 ## Validation and execution
 
 The packaging validator checks slot IDs, references, inheritance, cycles, numeric offsets, fallback policy, and legacy visual verification. Runtime execution additionally checks text bounds, safe zones, collision policy, layer order, final subtitle text, and rendered transform fields after read-back.
+
+
+## Animated auxiliary marks and text readability
+
+Static slot geometry does not prove that a mark remains readable while it
+animates. For `auxiliary_mark` slots, badges, and decorative symbols, inspect
+the rendered group at animation entry, perceptual peak, and exit. Account for
+effective scale, rotation, stroke, shadow, glow, opacity, and safe-zone bounds
+in each sampled state.
+
+An attached or intentional-overlap relation describes layout intent; it does
+not waive readability review. Confirm that the mark does not obscure text
+glyphs or essential picture content and that contrast remains adequate while
+both elements are visible. If animated bounds or rendered states cannot be
+resolved from available evidence, use `manual_review` rather than inferring a
+pass from base transforms alone.
