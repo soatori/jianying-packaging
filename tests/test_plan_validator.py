@@ -310,6 +310,65 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(warnings, [])
 
+    def test_optional_dialogue_and_same_screen_metadata(self) -> None:
+        plan = valid_plan()
+        plan["groups"][0].update({
+            "group_kind": "question",
+            "sentence_count": 2,
+            "speaker_context": [{
+                "unit_ref": "q-unit",
+                "speaker_id": "host",
+                "turn_role": "question",
+                "confidence": "high",
+            }],
+            "spacing_after_us": 5_540_000,
+            "same_screen": {
+                "enabled": True,
+                "extend_to_group_end": True,
+                "overlap_policy": "separate_upper_tracks",
+            },
+        })
+        errors, warnings = VALIDATOR.validate_plan(plan)
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_optional_dialogue_metadata_fails_closed(self) -> None:
+        cases = [
+            ("group_kind", "unsupported"),
+            ("sentence_count", 0),
+            ("spacing_after_us", -1),
+        ]
+        for field, value in cases:
+            plan = valid_plan()
+            plan["groups"][0][field] = value
+            self.assert_error_contains(plan, field)
+
+        plan = valid_plan()
+        plan["groups"][0]["speaker_context"] = [{
+            "unit_ref": "q-unit",
+            "speaker_id": "host",
+            "turn_role": "question",
+        }]
+        self.assert_error_contains(plan, "confidence")
+
+        plan = valid_plan()
+        plan["groups"][0]["same_screen"] = {
+            "enabled": True,
+            "extend_to_group_end": False,
+            "overlap_policy": "separate_upper_tracks",
+        }
+        self.assert_error_contains(plan, "extend_to_group_end")
+
+    def test_schema_12_speaker_unit_must_be_declared(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["speaker_context"] = [{
+            "unit_ref": "undeclared-unit",
+            "speaker_id": "host",
+            "turn_role": "question",
+            "confidence": "high",
+        }]
+        self.assert_error_contains(plan, "declared semantic_unit_ref")
+
     def test_malformed_enum_types_are_rejected_without_crashing(self) -> None:
         for field, value in (
             ("category", []),

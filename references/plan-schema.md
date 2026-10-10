@@ -122,7 +122,38 @@ Every group keeps the existing `id`, `status`, `range`, `context`, `category`, `
 }
 ```
 
-`layout` is required for final visual groups in 1.2. A slot has a unique ID, a typed subtitle/auxiliary reference, and numeric relative offsets. `relative_to` and `inherit_transform_from` may refer to any declared slot. The validator rejects unknown references and cycles. Use `legacy_absolute` only with explicit visual verification and manual-review fallback.
+### Optional dialogue and same-screen metadata
+
+These fields are optional and backward compatible. They make speaker-aware selection and same-screen review machine-checkable without changing the required group contract:
+
+```json
+{
+  "group_kind": "question",
+  "sentence_count": 2,
+  "speaker_context": [
+    {
+      "unit_ref": "semantic-unit-ref",
+      "speaker_id": "host",
+      "turn_role": "question",
+      "confidence": "high"
+    }
+  ],
+  "spacing_after_us": 5540000,
+  "same_screen": {
+    "enabled": true,
+    "extend_to_group_end": true,
+    "overlap_policy": "separate_upper_tracks"
+  }
+}
+```
+
+- `group_kind` is one of `question`, `answer`, `opening_theme`, `ending_theme`, or `other_key`.
+- `sentence_count` is an integer from 1 through 3.
+- `speaker_context[].unit_ref` must identify a semantic unit; `turn_role` is one of `narration`, `question`, `answer`, `reaction`, or `other`; `confidence` is `high`, `medium_high`, `medium`, `low`, or `unknown`.
+- `spacing_after_us` records the gap to the next selected group and must be non-negative.
+- When `same_screen.enabled` is true, `extend_to_group_end` must be true and `overlap_policy` must be `separate_upper_tracks`.
+
+`layout` is required for final visual groups in 1.2.`layout` is required for final visual groups in 1.2. A slot has a unique ID, a typed subtitle/auxiliary reference, and numeric relative offsets. `relative_to` and `inherit_transform_from` may refer to any declared slot. The validator rejects unknown references and cycles. Use `legacy_absolute` only with explicit visual verification and manual-review fallback.
 
 For 1.2, every slot must declare `ref_type`. `subtitle_unit` references must be listed in `semantic_unit_refs`; `auxiliary_mark` references must be listed in `auxiliary_text_refs`. Template inheritance uses parent slots first, then child slots; a same-ID child slot overrides the parent and a new child slot is appended. Inheritance cycles are invalid.
 
@@ -130,7 +161,20 @@ When a visual text operation supplies `text`, it must also supply `text_ref` and
 
 The template registry defines generic slot relationships; it must not contain project text, project timestamps, draft paths, or project IDs. Runtime `jianying-editor` resolves `X0/Y0`, canvas conversion, text bounds, safe zones, and actual rendered fields.
 
-## Visual and audio operations
+### Review evidence for these fields
+
+A plan that carries dialogue or same-screen metadata should also carry a review report containing:
+
+- the current source/target hashes and duration;
+- group start/middle/end preview times and observed layer counts;
+- source visibility and clone-only hidden-row read-back;
+- assigned upper track IDs and moved segment IDs;
+- manual transform comparisons;
+- backup path and replica-validation result.
+
+A missing or stale review report blocks final/apply even when the structural plan validates.
+
+## Visual and audio operations## Visual and audio operations
 
 Use exact locators for executable operations. A new object needs a target track locator; an existing object needs a segment locator. A copied template must identify its source closure and allowed overrides. Every override is either `{ "mode": "absolute", "value": ... }` or `{ "mode": "relative", "delta": ... }`.
 

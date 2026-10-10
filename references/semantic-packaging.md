@@ -8,7 +8,16 @@ The default emphasis unit is a complete sentence. Preserve the sentence as suppl
 
 For short videos, group one to three complete sentences when they share a message; two is a useful default when timing and meaning fit. Group size controls the composition, not the unit of text selection. Follow any explicit user grouping.
 
-Good emphasis candidates include:
+### Dialogue-aware groups
+
+Multi-speaker dialogue is grouped by turn function, not by adjacent subtitle rows alone.
+
+- Keep the host/guest speaker ID, turn role, and confidence with each semantic unit. If the speaker is inferred rather than heard, mark it for listening review.
+- A question is a complete question unit and forms its own key group. Do not prepend host setup or append the answer unless the user explicitly approves that composition.
+- After selecting all questions, choose 1–2 answer groups from the answers. Record them separately as `answer` groups rather than counting them as part of the question group.
+- Do not treat repeated technical nouns or a long preamble as emphasis merely because they precede a question.
+
+Good emphasis candidates include:Good emphasis candidates include:
 
 - decisive product, brand, or technical names;
 - numbers together with units, ranges, and conditions;
@@ -50,7 +59,23 @@ Use level 1 for supportive emphasis, level 2 for important information, and leve
 - Treat punctuation, labels, icons, and background shapes as subordinate layers of the same group.
 - When emphasis lines are copied onto an upper track they inherit the caption baseline. Anchor the first/single line on that baseline and move apart only the lines that genuinely overlap in time, by the reference-derived row spacing; for dense multi-name groups prefer a two-column block near the safe-zone edge over an ever-taller single stack.
 
-## Sound choice
+### Opening, ending, and spacing
+
+- The opening group must expose the video's subject or mechanism; the ending group must expose the final benefit, risk, consequence, or call to action.
+- After required question and answer groups are selected, compare each remaining key group with the previous and next selected group. Large clusters and long empty runs both require review; adjust selection or grouping before applying motion.
+- Preserve the user's confirmed group boundaries. A manual split, merge, retime, or transform supersedes an earlier generated group report.
+
+### Review record
+
+Each reviewed key group should be exported with:
+
+- group ID and `group_kind` (`question`, `answer`, `opening_theme`, `ending_theme`, or `other_key`);
+- start/end and complete sentence count;
+- speaker IDs, turn roles, and confidence;
+- neighboring context and spacing notes;
+- review status and any listening-dependent issue.
+
+## Sound choice## Sound choice
 
 Choose sound from both motion and meaning:
 

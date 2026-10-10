@@ -25,7 +25,14 @@ Read each complete sentence with its neighboring context and the video's communi
 - Keep ordinary explanations restrained; distinguish supporting facts from core takeaways. Do not promote every brand, number, or technical term automatically.
 - Do not change spoken meaning in the packaging layer. Display-only edits such as line breaks or approved shortening remain tied to the complete source sentence and require review.
 
-For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).
+### Dialogue-aware selection
+
+- Read speaker and turn roles from the approved rough-cut/subtitle handoff. Treat a host preamble, the actual question, and the guest answer as separate semantic units unless the user explicitly approves another grouping.
+- Select every complete question as its own key group. Choose only 1–2 separate answer groups; do not fold answers into the question group by default.
+- Mark the opening and ending with theme-bearing groups. After the required question/answer choices, compare the remaining key groups against their neighbors so their timing gaps are reasonably balanced.
+- Record `group_kind`, `speaker_context`, and `sentence_count` in review artifacts. A group normally contains 1–3 complete sentences and should be labeled `句1/2` when it contains two.
+
+For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).
 
 ## Modes and workflow
 
@@ -44,7 +51,24 @@ Choose analysis for review-only requests. Staging or final writes require explic
 
 When requesting a clone, preserve the source labels required by the active project's naming convention and give the copy a purpose-specific, unique name. The naming tokens and suffix format come from the active project/editor workflow; this skill does not prescribe literal sample names or a timezone.
 
-## Motion, sound, and review gates
+### Stale-plan gate
+
+A manual edit to the current saved timeline invalidates the previous plan and group report. Before staging or final execution, re-decode the source and target and compare at least the source/target hash, duration, subtitle-row count, group row ranges, visibility flags, and transform values. If any differ from the plan snapshot, rebuild the plan and review artifacts from the current saved timeline; never restore stale locators or the old selection.When requesting a clone, preserve the source labels required by the active project's naming convention and give the copy a purpose-specific, unique name. The naming tokens and suffix format come from the active project/editor workflow; this skill does not prescribe literal sample names or a timezone.
+
+## Review methods
+
+Run these checks against the current saved timeline, not against an earlier exported SRT or plan.
+
+1. **Selection review:** confirm group count, complete-sentence boundaries, speaker/turn labels, question groups, the 1–2 answer groups, opening/ending groups, and timing-gap balance.
+2. **Text review:** compare every staged text hash with the approved subtitle reference; verify `句N/M` labels and that no semantic unit was rewritten.
+3. **Same-screen review:** for each group inspect the first frame, a middle frame, and the final frame. Confirm every intended line is visible at the group end, there is no same-track overlap, and manual transforms were preserved.
+4. **Covered-subtitle review:** on the source timeline, originals remain unchanged. On an explicitly approved clone, only covered originals may be hidden; verify `visible=false` by read-back and by preview.
+5. **Editor review:** run `jianying-editor validate`, verify every replica, source hash preservation, backup presence, and plan/read-back equality.
+6. **Preview review:** use `jianying-preview frame` or `shot` at group start/middle/end. Stop on text mismatch, unexpected layer addition/removal, collision, obstruction, or a source-timeline change.
+
+Record the selected review times, observed layer counts, track assignments, backup path, and any unresolved speaker/listening issue in the review report.
+
+## Motion, sound, and review gates## Motion, sound, and review gates
 
 - Keep motion traceable to a user-approved template or verified source, and vary among reference-backed choices within the plan reuse cap. Do not invent support for raw properties from field names alone.
 - Treat each perceptual motion beat as an event. Co-timed layers share one event and normally one primary sound; separate entrances or moving marks are separate events.

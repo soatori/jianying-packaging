@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Any
 
 
+GROUP_KINDS = {
+    "question", "answer", "opening_theme", "ending_theme", "other_key",
+}
+SPEAKER_CONTEXT_CONFIDENCES = {"high", "medium_high", "medium", "low", "unknown"}
+SPEAKER_TURN_ROLES = {"narration", "question", "answer", "reaction", "other"}
+SAME_SCREEN_OVERLAP_POLICIES = {"separate_upper_tracks", "manual_review"}
+
 CATEGORIES = {
     "question", "core_point", "number_parameter", "product_brand",
     "technical_term", "risk_warning", "conclusion", "contrast_turn",
@@ -144,6 +151,66 @@ def validate_override(path: str, value: Any, errors: list[str]) -> None:
             errors.append(f"{path}.delta: relative delta must be numeric")
     else:
         errors.append(f"{path}: mode must be absolute or relative")
+
+
+def validate_dialogue_group_metadata(
+    path: str,
+    group: dict[str, Any],
+    semantic_refs: set[str],
+    errors: list[str],
+) -> None:
+    """Validate optional speaker-aware and same-screen review metadata."""
+    group_kind = group.get("group_kind")
+    if group_kind is not None:
+        if not isinstance(group_kind, str) or group_kind not in GROUP_KINDS:
+            errors.append(f"{path}.group_kind: invalid group kind")
+        elif group_kind == "question" and group.get("category") not in {None, "question"}:
+            errors.append(f"{path}.group_kind: question groups must use category 'question'")
+
+    sentence_count = group.get("sentence_count")
+    if sentence_count is not None and (
+        not is_int(sentence_count) or sentence_count < 1 or sentence_count > 3
+    ):
+        errors.append(f"{path}.sentence_count: must be an integer from 1 through 3")
+
+    speaker_context = group.get("speaker_context")
+    if speaker_context is not None:
+        if not isinstance(speaker_context, list):
+            errors.append(f"{path}.speaker_context: must be an array")
+        else:
+            for index, item in enumerate(speaker_context):
+                item_path = f"{path}.speaker_context[{index}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{item_path}: must be an object")
+                    continue
+                for field in ("unit_ref", "speaker_id", "turn_role", "confidence"):
+                    if not is_nonempty_string(item.get(field)):
+                        errors.append(f"{item_path}.{field}: required non-empty string")
+                turn_role = item.get("turn_role")
+                if isinstance(turn_role, str) and turn_role not in SPEAKER_TURN_ROLES:
+                    errors.append(f"{item_path}.turn_role: invalid")
+                confidence = item.get("confidence")
+                if isinstance(confidence, str) and confidence not in SPEAKER_CONTEXT_CONFIDENCES:
+                    errors.append(f"{item_path}.confidence: invalid")
+                unit_ref = item.get("unit_ref")
+                if semantic_refs and isinstance(unit_ref, str) and unit_ref not in semantic_refs:
+                    errors.append(f"{item_path}.unit_ref: must be a declared semantic_unit_ref")
+
+    spacing_after_us = group.get("spacing_after_us")
+    if spacing_after_us is not None and (not is_int(spacing_after_us) or spacing_after_us < 0):
+        errors.append(f"{path}.spacing_after_us: must be a non-negative integer")
+
+    same_screen = group.get("same_screen")
+    if same_screen is not None:
+        if not isinstance(same_screen, dict):
+            errors.append(f"{path}.same_screen: must be an object")
+        elif not isinstance(same_screen.get("enabled"), bool):
+            errors.append(f"{path}.same_screen.enabled: must be boolean")
+        elif same_screen.get("enabled") is True:
+            if same_screen.get("extend_to_group_end") is not True:
+                errors.append(f"{path}.same_screen.extend_to_group_end: must be true when enabled")
+            if same_screen.get("overlap_policy") not in SAME_SCREEN_OVERLAP_POLICIES:
+                errors.append(f"{path}.same_screen.overlap_policy: invalid")
 
 
 def validate_timerange(
@@ -1144,6 +1211,8 @@ def validate_plan(
         level = group.get("level")
         if not is_int(level) or level not in {1, 2, 3}:
             errors.append(f"{path}.level: must be 1, 2, or 3")
+
+        validate_dialogue_group_metadata(path, group, semantic_refs, errors)
 
         motion = group.get("motion")
         motion_valid = isinstance(motion, str) and motion in MOTIONS
