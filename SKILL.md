@@ -32,7 +32,7 @@ Read each complete sentence with its neighboring context and the video's communi
 - Mark the opening and ending with theme-bearing groups. After the required question/answer choices, compare the remaining key groups against their neighbors so their timing gaps are reasonably balanced.
 - Record `group_kind`, `speaker_context`, and `sentence_count` in review artifacts. A group normally contains 1–3 complete sentences and should be labeled `句1/2` when it contains two.
 
-For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).
+For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).
 
 ## Modes and workflow
 
@@ -53,7 +53,7 @@ When requesting a clone, preserve the source labels required by the active proje
 
 ### Stale-plan gate
 
-A manual edit to the current saved timeline invalidates the previous plan and group report. Before staging or final execution, re-decode the source and target and compare at least the source/target hash, duration, subtitle-row count, group row ranges, visibility flags, and transform values. If any differ from the plan snapshot, rebuild the plan and review artifacts from the current saved timeline; never restore stale locators or the old selection.When requesting a clone, preserve the source labels required by the active project's naming convention and give the copy a purpose-specific, unique name. The naming tokens and suffix format come from the active project/editor workflow; this skill does not prescribe literal sample names or a timezone.
+A manual edit to the current saved timeline invalidates the previous plan and group report. Before staging or final execution, re-decode the source and target and compare at least the source/target hash, duration, subtitle-row count, group row ranges, visibility flags, and transform values. If any differ from the plan snapshot, rebuild the plan and review artifacts from the current saved timeline; never restore stale locators or the old selection.
 
 ## Review methods
 
@@ -68,7 +68,7 @@ Run these checks against the current saved timeline, not against an earlier expo
 
 Record the selected review times, observed layer counts, track assignments, backup path, and any unresolved speaker/listening issue in the review report.
 
-## Motion, sound, and review gates## Motion, sound, and review gates
+## Motion, sound, and review gates
 
 - Keep motion traceable to a user-approved template or verified source, and vary among reference-backed choices within the plan reuse cap. Do not invent support for raw properties from field names alone.
 - Treat each perceptual motion beat as an event. Co-timed layers share one event and normally one primary sound; separate entrances or moving marks are separate events.

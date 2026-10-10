@@ -25,7 +25,16 @@ This document also carries the text-track copy/staging operations formerly owned
 
 The phase controls the operation. Copying a sentence to an upper track does not by itself authorize hiding the source; the user must approve clone-only disabling after reviewing the overlay.
 
-## Track copy and disable mechanics## Track copy and disable mechanics
+## Plan-level operation contract
+
+A packaging plan may request two editor mutations; packaging records the approval and acceptance criteria, while `jianying-editor` only translates them:
+
+- `clone_only_disable_covered_originals`: explicit authorization is required; target a clone only; hide the approved covered segments individually; never alter or hide the source timeline or source subtitle track.
+- `same_screen_retrack`: use approved group end times; extend and move only approved segments; record the source and destination track for every moved segment; preserve text, material, style, and manual transforms; require zero same-track overlap.
+
+Before either mutation, re-decode the current saved source and target and compare the plan snapshot. Require a pre-write backup, unchanged source hash, validated replicas, read-back equality, and a report containing the backup path, changed segment IDs, track IDs, visibility flags, and validation results. Stale locators or manual-edit drift are stop conditions.
+
+## Track copy and disable mechanics
 
 - Deep-copy each copied segment's text material under a new UUID and repoint `material_id`; a copy that shares the source material pollutes color/animation edits on the original.
 - Clear `extra_material_refs` on copies; motion is attached later per the approved packaging plan.
@@ -56,7 +65,7 @@ For a reviewed group whose last text ends at `group_end`:
 - Confirm the backup path, replica validation, source hash preservation, and an `ir-diff`/frame comparison with no unplanned changes.
 - Stop on stale locators, text mismatch, collision, source mutation, missing backup, or an unresolved speaker/listening issue.
 
-## Editor state and write-back pitfalls## Editor state and write-back pitfalls
+## Editor state and write-back pitfalls
 
 - JianYing does not hot-reload a draft file. After any write, the user must return to the draft list (or restart) and reopen; saving from a stale editor session overwrites the write.
 - A running JianYing rewrites draft replicas (content hashes change). Re-decode the current saved timeline at the start of every pass; never reuse a decoded snapshot or locator cache.
