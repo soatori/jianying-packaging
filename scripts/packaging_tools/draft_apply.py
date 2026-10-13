@@ -1981,6 +1981,17 @@ def apply_packaging_plan(
 
         source_value = project.decode(project.content_path(source_id)).value
         source_hash = _hash_value(source_value)
+        if apply:
+            review = plan.get("review_report") if isinstance(plan.get("review_report"), dict) else {}
+            reviewed_source_hash = review.get("source_timeline_hash")
+            if not isinstance(reviewed_source_hash, str) or not reviewed_source_hash:
+                return result("packaging_apply", errors=["review_report.source_timeline_hash is required for apply"])
+            if reviewed_source_hash != source_hash:
+                return result(
+                    "packaging_apply",
+                    data={"source_hash": source_hash},
+                    errors=["review_report.source_timeline_hash does not match the current source timeline"],
+                )
         animation_specs = [
             visual.get("animation")
             for group in plan.get("groups", []) if isinstance(group, dict)

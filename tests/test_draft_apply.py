@@ -26,15 +26,19 @@ from tests.test_plan_validator import synthetic_sound_catalog, synthetic_sound_p
 class DraftApplyTests(unittest.TestCase):
     def apply_with_approved_preview(self, plan: dict, **kwargs):
         kwargs.pop("apply", None)
+        kwargs.setdefault("temp_root", Path(kwargs["draft_path"]) / "temp")
         preview = draft_apply.apply_packaging_plan(plan, apply=False, **kwargs)
         if not preview.get("ok"):
             return preview
         preview_hash = (preview.get("data") or {}).get("visual_preview_sha256")
+        plan["review_report"] = {
+            "source_timeline_hash": preview["data"]["source_timeline_hash"],
+        }
         if preview_hash:
-            plan["review_report"] = {
-                "visual_preview_status": "approved",
-                "visual_preview_sha256": preview_hash,
-            }
+            plan["review_report"].update(
+                visual_preview_status="approved",
+                visual_preview_sha256=preview_hash,
+            )
         return draft_apply.apply_packaging_plan(plan, apply=True, **kwargs)
 
     def test_default_temp_root_is_skill_root_temp(self):
@@ -1146,6 +1150,9 @@ class DraftApplyTests(unittest.TestCase):
                     apply=False, project=project, editor_api=FakeEditorApi, temp_root=temp_root,
                 )
                 self.assertTrue(preview["ok"], preview)
+                plan["review_report"] = {
+                    "source_timeline_hash": preview["data"]["source_timeline_hash"],
+                }
                 unapproved = draft_apply.apply_packaging_plan(
                     plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
                     sound_catalog=synthetic_sound_catalog(), sound_pools=synthetic_sound_pools(),
@@ -1157,6 +1164,7 @@ class DraftApplyTests(unittest.TestCase):
                 plan["review_report"] = {
                     "visual_preview_status": "approved",
                     "visual_preview_sha256": preview["data"]["visual_preview_sha256"],
+                    "source_timeline_hash": preview["data"]["source_timeline_hash"],
                 }
                 position = plan["groups"][0]["visual"][0]["overrides"]["position_y"]
                 original_y = position["value"]
@@ -1179,6 +1187,76 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(applied["data"]["visual_preview_sha256"], preview["data"]["visual_preview_sha256"])
             self.assertEqual(len(project.clone_calls), 1)
             self.assertEqual(applied["data"]["human_visual_audio_review"], "pending")
+
+    def test_apply_blocks_when_reviewed_source_hash_is_stale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = draft_value()
+            add_motion_payload(source)
+            project = FakeProject(root, source)
+            plan = final_apply_plan(str(root.resolve()))
+            temp_root = root / "temp"
+            kwargs = {
+                "draft_path": directory,
+                "timeline": "manual",
+                "editor_root": Path("unused"),
+                "sound_catalog": synthetic_sound_catalog(),
+                "sound_pools": synthetic_sound_pools(),
+                "project": project,
+                "editor_api": FakeEditorApi,
+                "temp_root": temp_root,
+            }
+
+            with patch.object(draft_apply, "measure_text_lines", return_value=[{"text": "Synthetic Q", "width_px": 120.0, "height_px": 18.0}]), patch.object(
+                draft_apply, "_font_for_material", return_value=("synthetic.ttf", 18.0, 0.0)
+            ):
+                preview = draft_apply.apply_packaging_plan(plan, apply=False, **kwargs)
+                self.assertTrue(preview["ok"], preview)
+                plan["review_report"] = {
+                    "visual_preview_status": "approved",
+                    "visual_preview_sha256": preview["data"]["visual_preview_sha256"],
+                    "source_timeline_hash": preview["data"]["source_timeline_hash"],
+                }
+                project.values["T1"]["duration"] += 1
+                refreshed_preview = draft_apply.apply_packaging_plan(plan, apply=False, **kwargs)
+                self.assertTrue(refreshed_preview["ok"], refreshed_preview)
+                self.assertEqual(
+                    refreshed_preview["data"]["visual_preview_sha256"],
+                    plan["review_report"]["visual_preview_sha256"],
+                )
+                self.assertNotEqual(
+                    refreshed_preview["data"]["source_timeline_hash"],
+                    plan["review_report"]["source_timeline_hash"],
+                )
+                report = draft_apply.apply_packaging_plan(plan, apply=True, **kwargs)
+
+            self.assertFalse(report["ok"], report)
+            self.assertTrue(any("source_timeline_hash" in error for error in report["errors"]))
+            self.assertEqual(project.clone_calls, [])
+            self.assertEqual(project.write_calls, [])
+
+    def test_apply_blocks_when_reviewed_source_hash_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = FakeProject(Path(directory), draft_value())
+            plan = staging_plan(str(Path(directory).resolve()))
+
+            report = draft_apply.apply_packaging_plan(
+                plan,
+                draft_path=directory,
+                timeline="manual",
+                editor_root=Path("unused"),
+                sound_catalog={"presets": []},
+                sound_pools={"pools": []},
+                apply=True,
+                project=project,
+                editor_api=FakeEditorApi,
+                temp_root=Path(directory) / "temp",
+            )
+
+            self.assertFalse(report["ok"], report)
+            self.assertTrue(any("source_timeline_hash" in error for error in report["errors"]))
+            self.assertEqual(project.clone_calls, [])
+            self.assertEqual(project.write_calls, [])
 
     def test_dry_run_does_not_clone_or_write(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1666,8 +1744,29 @@ class DraftApplyTests(unittest.TestCase):
 
     def test_sound_apply_requires_dialogue_evidence_before_clone(self):
         with tempfile.TemporaryDirectory() as directory:
-            project = FakeProject(Path(directory), draft_value())
+            source = draft_value()
+            add_motion_payload(source)
+            project = FakeProject(Path(directory), source)
             plan = final_apply_plan(str(Path(directory).resolve()))
+            plan["groups"][0]["audio"] = {"action": "none"}
+            temp_root = Path(directory) / "temp"
+            with patch.object(draft_apply, "measure_text_lines", return_value=[{"text": "Synthetic Q", "width_px": 120.0, "height_px": 18.0}]), patch.object(
+                draft_apply, "_font_for_material", return_value=("synthetic.ttf", 18.0, 0.0)
+            ):
+                preview = draft_apply.apply_packaging_plan(
+                    plan,
+                    draft_path=directory,
+                    timeline="manual",
+                    editor_root=Path("unused"),
+                    sound_catalog=synthetic_sound_catalog(),
+                    sound_pools=synthetic_sound_pools(),
+                    apply=False,
+                    project=project,
+                    editor_api=FakeEditorApi,
+                    temp_root=temp_root,
+                )
+            self.assertTrue(preview["ok"], preview)
+            plan["review_report"] = {"source_timeline_hash": preview["data"]["source_timeline_hash"]}
             audio = copy.deepcopy(valid_plan_v12()["groups"][0]["audio"])
             audio.update({
                 "action": "reuse_existing",
@@ -1688,6 +1787,7 @@ class DraftApplyTests(unittest.TestCase):
                 apply=True,
                 project=project,
                 editor_api=FakeEditorApi,
+                temp_root=temp_root,
             )
 
             self.assertFalse(report["ok"])

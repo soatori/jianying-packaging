@@ -186,14 +186,14 @@ Transparency maps to `segment.global_alpha` only when that field exists on the c
 
 A plan that carries dialogue or same-screen metadata should also carry a review report containing:
 
-- the current source/target hashes and duration;
+- `source_timeline_hash` from the latest dry-run, plus the current target hash and duration;
 - group start/middle/end preview times and observed layer counts;
 - source visibility and clone-only hidden-row read-back;
 - assigned upper track IDs and moved segment IDs;
 - manual transform comparisons;
 - backup path and replica-validation result.
 
-A missing or stale review report blocks final/apply even when the structural plan validates. If the plan changes its layout/animation or its current source changes, regenerate and reapprove the preview hash.
+A missing or stale review report blocks final/apply even when the structural plan validates. Every apply requires `review_report.source_timeline_hash` to match the current source hash. If the plan changes its layout/animation or its current source changes, regenerate the dry-run and reapprove the preview hash.
 
 ## Replica audit
 
