@@ -2122,7 +2122,7 @@ def apply_packaging_plan(
 
         close_warning = project._assert_editor_closed() if hasattr(project, "_assert_editor_closed") else None
         if close_warning:
-            apply_warnings.append(str(close_warning))
+            return result("packaging_apply", data=preview_data, errors=[str(close_warning)], warnings=apply_warnings)
 
         target_id = source_id
         clone_backup = None

@@ -1579,36 +1579,11 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(report["data"]["human_visual_audio_review"], "pending")
             self.assertEqual(report["data"]["phase_state"]["packaging_final"], "awaiting_human_visual_audio_review")
 
-    def test_editor_close_warning_is_advisory_and_preserved_on_success(self):
+    def test_editor_close_warning_blocks_before_clone(self):
         with tempfile.TemporaryDirectory() as directory:
             warning = "Jianying is running; closing is recommended."
             project = FakeProject(Path(directory), draft_value())
             project._assert_editor_closed = lambda: warning
-            plan = staging_plan(str(Path(directory).resolve()))
-
-            report = self.apply_with_approved_preview(
-                plan,
-                draft_path=directory,
-                timeline="manual",
-                editor_root=Path("unused"),
-                sound_catalog={"presets": []},
-                sound_pools={"pools": []},
-                apply=True,
-                project=project,
-                editor_api=FakeEditorApi,
-            )
-
-            self.assertTrue(report["ok"], report)
-            self.assertIn(warning, report["warnings"])
-            self.assertEqual(project.clone_calls, [("T1", "packaged")])
-            self.assertEqual(project.write_calls, ["T2"])
-
-    def test_editor_close_warning_is_preserved_on_clone_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            warning = "Jianying is running; closing is recommended."
-            project = FakeProject(Path(directory), draft_value())
-            project._assert_editor_closed = lambda: warning
-            project.clone_timeline = lambda *_args, **_kwargs: {"ok": False, "error": "injected clone failure"}
             plan = staging_plan(str(Path(directory).resolve()))
 
             report = self.apply_with_approved_preview(
@@ -1624,8 +1599,8 @@ class DraftApplyTests(unittest.TestCase):
             )
 
             self.assertFalse(report["ok"])
-            self.assertIn(warning, report["warnings"])
-            self.assertTrue(any("injected clone failure" in error for error in report["errors"]))
+            self.assertIn(warning, report["errors"])
+            self.assertEqual(project.clone_calls, [])
             self.assertEqual(project.write_calls, [])
 
     def test_editor_clone_exception_warning_is_preserved(self):
@@ -1661,8 +1636,6 @@ class DraftApplyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             project = FakeProject(Path(directory), source, fail_write=True)
-            warning = "Jianying is running; closing is recommended."
-            project._assert_editor_closed = lambda: warning
             before = copy.deepcopy(source)
             plan = staging_plan(str(Path(directory).resolve()))
 
@@ -1682,13 +1655,10 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(source, before)
             self.assertEqual(project.values["T2"]["tracks"], source["tracks"])
             self.assertTrue(any("injected write failure" in error for error in report["errors"]))
-            self.assertIn(warning, report["warnings"])
 
     def test_readback_decode_failure_restores_clone_without_decoding_first(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value(), fail_decode_while_target_is_modified=True)
-            warning = "Jianying is running; closing is recommended."
-            project._assert_editor_closed = lambda: warning
             plan = staging_plan(str(Path(directory).resolve()))
 
             report = self.apply_with_approved_preview(
@@ -1702,7 +1672,6 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(project.write_calls, ["T2", "T2"])
             self.assertTrue(report["data"]["target_clone_preserved"])
             self.assertGreaterEqual(project.validate_calls.count("T2"), 1)
-            self.assertIn(warning, report["warnings"])
 
     def test_apply_gate_blocks_before_editor_access(self):
         with tempfile.TemporaryDirectory() as directory:
