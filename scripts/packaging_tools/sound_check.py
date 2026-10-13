@@ -199,6 +199,9 @@ def check_sound_operations(plan: Any, catalog: Any, pools: Any, existing_audio: 
     intervals = []
     for item in audio_rows:
         span = _interval(item)
+        kind = str(item.get("kind", item.get("type", item.get("track_type", item.get("role", ""))))).lower()
+        if kind in {"dialogue", "voice", "speech", "spoken"} and span is None:
+            report_gate(f"dialogue interval evidence is invalid ({item.get('id', 'unknown')})", final_only=True)
         if span:
             intervals.append((item, span))
     active_audio_groups: list[dict[str, Any]] = []

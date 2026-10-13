@@ -418,6 +418,35 @@ class PackagingToolTests(unittest.TestCase):
         self.assertFalse(sound_only_report["ok"])
         self.assertTrue(any("dialogue evidence" in error for error in sound_only_report["errors"]))
 
+    def test_final_sound_check_rejects_dialogue_rows_without_valid_intervals(self):
+        plan, catalog, pools = self._sound_fixture()
+        plan["execution"]["phase"] = "final"
+        invalid_evidence = [
+            [{"id": "voice", "kind": "dialogue"}],
+            [{"id": "voice", "kind": "dialogue", "start_us": 100, "end_us": 100}],
+        ]
+
+        valid = check_sound_operations(plan, catalog, pools, [{"id": "voice", "kind": "dialogue", "start_us": 0, "end_us": 50}])
+        self.assertTrue(valid["ok"], valid)
+        for evidence in invalid_evidence:
+            with self.subTest(evidence=evidence):
+                report = check_sound_operations(plan, catalog, pools, evidence)
+                self.assertFalse(report["ok"], report)
+                self.assertTrue(any("dialogue interval" in error for error in report["errors"]))
+
+    def test_review_sound_check_warns_on_unresolved_dialogue_intervals(self):
+        plan, catalog, pools = self._sound_fixture()
+        invalid_evidence = [
+            [{"id": "voice", "kind": "dialogue"}],
+            [{"id": "voice", "kind": "dialogue", "start_us": 100, "end_us": 100}],
+        ]
+
+        for evidence in invalid_evidence:
+            with self.subTest(evidence=evidence):
+                report = check_sound_operations(plan, catalog, pools, evidence)
+                self.assertTrue(report["ok"], report)
+                self.assertTrue(any("dialogue interval" in warning for warning in report["warnings"]))
+
     def test_text_mirrors_and_style_ranges_must_stay_synchronized(self):
         prototype = {"content": {"text": "旧", "styles": [{"start": 0, "end": 1}]}, "base_content": "旧", "recognize_text": {"text": "旧"}}
         valid = {"content": {"text": "新", "styles": [{"start": 0, "end": 1}]}, "base_content": "新", "recognize_text": {"text": "新"}}
