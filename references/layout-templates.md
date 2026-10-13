@@ -1,6 +1,6 @@
 # Relative layout templates
 
-The layout registry is a reusable geometry vocabulary, not a collection of project-specific positions. A template defines a local coordinate frame and named slots. `jianying-editor` resolves the frame from the current final subtitle reference and converts it to the current Jianying version's stored transform.
+The layout registry is a reusable geometry vocabulary, not a collection of project-specific positions. A template defines a local coordinate frame and named slots. The schema 1.2 packaging adapter resolves the frame from current visible subtitles and applies relative transforms only when the target segment has the required confirmed transform fields. Reopening Jianying is still required to verify rendered bounds and readability.
 
 ## Coordinate frame
 
@@ -43,7 +43,11 @@ Inheritance is resolved from the root parent toward the child. Parent slots are 
 
 ## Validation and execution
 
-The packaging validator checks slot IDs, references, inheritance, cycles, numeric offsets, fallback policy, and legacy visual verification. Runtime execution additionally checks text bounds, safe zones, collision policy, layer order, final subtitle text, and rendered transform fields after read-back.
+The packaging validator checks slot IDs, references, inheritance, cycles, numeric offsets, fallback policy, and legacy visual verification. Final/apply layouts also require numeric `safe_zone` bounds in normalized canvas coordinates plus current canvas dimensions. Runtime execution measures every line with the font file and size in the text material, converts measured glyph bounds to the same normalized coordinate space, and fits the planned group inside the safe zone. If font metrics are unavailable or the measured group cannot fit, the write blocks. A symbolic safe-zone name is review-only.
+
+The adapter leaves existing manual transforms alone unless the plan supplies a layout change or explicit transform override. `layout.pattern: "diagonal_stagger"` may encode per-line diagonal offsets; it keeps rotation at zero. The adapter fits positions by measured widths and emits a deterministic HTML preview. Review the preview and store its reported SHA-256 in the plan before `--apply`; a changed source, plan, or candidate requires new preview approval. The preview describes geometry and timing intent and cannot prove that Jianying retains the effect after reopening.
+
+An `auxiliary_mark` or other declared auxiliary text must target an existing unique topmost text track. A missing track, ambiguous render order, or overlap with an existing segment on that track blocks the write; the adapter never creates the overlay track. Reopening Jianying is still required to verify clipping, opacity, layer order, and animation persistence.
 
 
 ## Animated auxiliary marks and text readability

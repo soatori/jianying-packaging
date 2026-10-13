@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPT_ROOT) not in sys.path:
@@ -22,10 +25,21 @@ from packaging_tools.text_ops import check_text_replacement
 from packaging_tools.verification import verify_packaging_result
 from packaging_tools.validators.generic_content import check_generic_content
 from packaging_tool import _parser as packaging_parser
+from packaging_tool import _preflight
 from packaging_tool import main as packaging_main
 
 
 class PackagingToolTests(unittest.TestCase):
+    def test_cli_exposes_dry_run_packaging_apply_command(self):
+        choices = packaging_parser()._subparsers._group_actions[0].choices
+        self.assertIn("apply", choices)
+        action = choices["apply"]
+        for option in ("--draft", "--timeline", "--plan", "--apply", "--existing-audio", "--animation-cache-root", "--animation-capabilities", "--animation-version"):
+            self.assertIn(option, action._option_string_actions)
+
+    def test_draft_apply_adapter_module_is_available(self):
+        self.assertIsNotNone(importlib.util.find_spec("packaging_tools.draft_apply"))
+
     def test_snapshot_adds_hashes_and_order_fingerprint(self):
         report = build_packaging_snapshot({"tracks": [{"id": "t1", "segments": [{"id": "s1"}]}], "subtitle_units": [{"unit_id": "u1", "text": "测试"}]})
         self.assertTrue(report["ok"])
@@ -45,6 +59,64 @@ class PackagingToolTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["data"]["slots"]["sub"]["x"], 11)
         self.assertEqual(report["data"]["slots"]["sub"]["y"], 22)
+
+    def test_layout_resolution_checks_full_text_bounds_against_safe_zone(self):
+        group = {
+            "id": "g1",
+            "layout": {
+                "template_id": "single",
+                "constraints": {
+                    "safe_zone": {"x_min": -0.8, "x_max": 0.8, "y_min": -0.8, "y_max": 0.8},
+                    "collision": "block",
+                },
+                "slots": [{"id": "main", "ref_type": "subtitle_unit", "text_ref": "u1", "offset": {"dx": 0, "dy": 0}, "bounds": {"width": 0.4, "height": 0.2}}],
+            },
+        }
+        registry = {"templates": [{"template_id": "single", "slots": []}]}
+
+        report = resolve_relative_layout(group, registry, {"x": 0.7, "y": 0})
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("safe-zone bounds" in error for error in report["errors"]))
+
+    def test_layout_resolution_keeps_symbolic_safe_zone_reviewable(self):
+        group = {
+            "id": "g1",
+            "layout": {
+                "template_id": "single",
+                "constraints": {"safe_zone": "project_safe_zone", "collision": "warn"},
+                "slots": [{"id": "main", "ref_type": "subtitle_unit", "text_ref": "u1", "offset": {"dx": 0, "dy": 0}}],
+            },
+        }
+        report = resolve_relative_layout(group, {"templates": [{"template_id": "single", "slots": []}]}, {"x": 0, "y": 0})
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(any("review-only" in warning for warning in report["warnings"]))
+
+    def test_layout_resolution_safe_zone_accounts_for_rotated_bounds(self):
+        group = {
+            "id": "g1",
+            "layout": {
+                "template_id": "single",
+                "constraints": {
+                    "safe_zone": {"x_min": -0.8, "x_max": 0.8, "y_min": -0.8, "y_max": 0.8},
+                    "collision": "block",
+                },
+                "slots": [{
+                    "id": "main",
+                    "ref_type": "subtitle_unit",
+                    "text_ref": "u1",
+                    "offset": {"dx": 0, "dy": 0.75},
+                    "bounds": {"width": 0.4, "height": 0.1},
+                    "transform": {"rotation": 90},
+                }],
+            },
+        }
+
+        report = resolve_relative_layout(group, {"templates": [{"template_id": "single", "slots": []}]}, {"x": 0, "y": 0})
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("outside safe-zone bounds" in error for error in report["errors"]))
 
     def test_text_check_blocks_uncovered_styles(self):
         report = check_text_replacement({"content": "旧"}, {"content": "新文本", "styles": [{"start": 0, "end": 1}]})
@@ -89,6 +161,173 @@ class PackagingToolTests(unittest.TestCase):
     def test_cli_uses_json_by_default_and_returns_success(self):
         registry = Path(__file__).resolve().parents[1] / "references" / "layout-template-registry.json"
         self.assertEqual(packaging_main(["validate", "layout", str(registry)]), 0)
+
+    def test_preflight_warns_on_associated_backup_drift(self):
+        backup = r"C:\draft\Timelines\T1\draft_content.json.bak"
+        manifest = {
+            "replicas": [
+                {"path": r"C:\draft\Timelines\T1\draft_content.json", "role": "primary", "primary": True, "associated": True},
+                {"path": backup, "role": "writable-backup", "primary": False, "associated": True},
+                {"path": r"C:\draft\Timelines\T1\template-2.tmp", "role": "writable-template", "primary": False, "associated": True},
+            ],
+            "errors": [],
+        }
+        calls = [
+            {"command": ["probe"], "result": {"ok": True}},
+            {"command": ["inspect"], "result": {"ok": True, "replica_manifest": manifest}},
+            {"command": ["validate"], "result": {"ok": False, "errors": [f"Replica differs from primary: {backup}"], "replica_manifest": manifest}},
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            draft.mkdir()
+            with patch("packaging_tool._run_editor_readonly", side_effect=calls):
+                report = _preflight(SimpleNamespace(draft=str(draft), timeline="T1", editor_root=None))
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["errors"], [])
+        self.assertEqual(report["warnings"], [f"Replica differs from primary: {backup}"])
+
+    def test_preflight_classifies_nonzero_editor_json_before_returncode(self):
+        backup = r"C:\draft\Timelines\T1\draft_content.json.bak"
+        manifest = {
+            "replicas": [
+                {"path": r"C:\draft\Timelines\T1\draft_content.json", "role": "primary", "primary": True, "associated": True},
+                {"path": backup, "role": "writable-backup", "primary": False, "associated": True},
+            ],
+            "errors": [],
+        }
+        payloads = {
+            "probe": {"ok": True},
+            "inspect": {"ok": True, "replica_manifest": manifest},
+            "validate": {
+                "ok": False,
+                "errors": [f"Replica differs from primary: {backup}"],
+                "replica_manifest": manifest,
+            },
+        }
+
+        def run(command, **_kwargs):
+            name = command[2]
+            payload = payloads[name]
+            return SimpleNamespace(
+                returncode=1 if name == "validate" else 0,
+                stdout=json.dumps(payload),
+                stderr="validation returned a structured failure",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            draft.mkdir()
+            with patch("packaging_tool.subprocess.run", side_effect=run):
+                report = _preflight(SimpleNamespace(
+                    draft=str(draft),
+                    timeline="T1",
+                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                ))
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["errors"], [])
+        self.assertEqual(report["warnings"], [f"Replica differs from primary: {backup}"])
+        self.assertEqual(report["data"]["editor_readonly_calls"][-1]["returncode"], 1)
+
+    def test_preflight_keeps_nonzero_structured_validation_errors_blocking(self):
+        payloads = {
+            "probe": {"ok": True},
+            "inspect": {"ok": True},
+            "validate": {"ok": False, "errors": ["draft content is invalid"]},
+        }
+
+        def run(command, **_kwargs):
+            return SimpleNamespace(
+                returncode=1 if command[2] == "validate" else 0,
+                stdout=json.dumps(payloads[command[2]]),
+                stderr="validation failed",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            draft.mkdir()
+            with patch("packaging_tool.subprocess.run", side_effect=run):
+                report = _preflight(SimpleNamespace(
+                    draft=str(draft),
+                    timeline="T1",
+                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                ))
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["errors"], ["draft content is invalid"])
+
+    def test_preflight_blocks_structured_errors_without_ok_flag(self):
+        payloads = {
+            "probe": {"ok": True},
+            "inspect": {"ok": True},
+            "validate": {"errors": ["draft content is invalid"]},
+        }
+
+        def run(command, **_kwargs):
+            return SimpleNamespace(
+                returncode=1 if command[2] == "validate" else 0,
+                stdout=json.dumps(payloads[command[2]]),
+                stderr="validation failed",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            draft.mkdir()
+            with patch("packaging_tool.subprocess.run", side_effect=run):
+                report = _preflight(SimpleNamespace(
+                    draft=str(draft),
+                    timeline="T1",
+                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                ))
+
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(report["errors"], ["draft content is invalid"])
+
+    def test_preflight_blocks_ok_false_without_structured_errors(self):
+        payloads = {
+            "probe": {"ok": True},
+            "inspect": {"ok": True},
+            "validate": {"ok": False},
+        }
+
+        def run(command, **_kwargs):
+            return SimpleNamespace(
+                returncode=1 if command[2] == "validate" else 0,
+                stdout=json.dumps(payloads[command[2]]),
+                stderr="validation failed without details",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            draft.mkdir()
+            with patch("packaging_tool.subprocess.run", side_effect=run):
+                report = _preflight(SimpleNamespace(
+                    draft=str(draft),
+                    timeline="T1",
+                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                ))
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("without structured errors" in error for error in report["errors"]), report)
+
+    def test_preflight_blocks_when_nonzero_editor_output_is_not_json(self):
+        def run(_command, **_kwargs):
+            return SimpleNamespace(returncode=1, stdout="not json", stderr="editor crashed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            draft.mkdir()
+            with patch("packaging_tool.subprocess.run", side_effect=run):
+                report = _preflight(SimpleNamespace(
+                    draft=str(draft),
+                    timeline="T1",
+                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                ))
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("editor crashed" in error for error in report["errors"]))
 
     def test_canonical_visual_hash_and_legacy_alias_conflict_are_fail_closed(self):
         text = "规范文本"

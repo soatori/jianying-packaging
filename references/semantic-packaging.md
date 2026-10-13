@@ -13,11 +13,11 @@ For short videos, group one to three complete sentences when they share a messag
 Multi-speaker dialogue is grouped by turn function, not by adjacent subtitle rows alone.
 
 - Keep the host/guest speaker ID, turn role, and confidence with each semantic unit. If the speaker is inferred rather than heard, mark it for listening review.
-- A question is a complete question unit and forms its own key group. Do not prepend host setup or append the answer unless the user explicitly approves that composition.
-- After selecting all questions, choose 1–2 answer groups from the answers. Record them separately as `answer` groups rather than counting them as part of the question group.
+- Keep each question and answer as a separate complete semantic unit. When the request calls for question-and-answer emphasis, select the questions and answers that fit the requested scope and density; do not automatically promote every question or impose a fixed answer-group count.
+- Do not prepend host setup or append the answer to a question group unless the user explicitly approves that composition. Record selected answers separately as `answer` groups.
 - Do not treat repeated technical nouns or a long preamble as emphasis merely because they precede a question.
 
-Good emphasis candidates include:Good emphasis candidates include:
+Good emphasis candidates include:
 
 - decisive product, brand, or technical names;
 - numbers together with units, ranges, and conditions;
@@ -75,7 +75,7 @@ Each reviewed key group should be exported with:
 - neighboring context and spacing notes;
 - review status and any listening-dependent issue.
 
-## Sound choice## Sound choice
+## Sound choice
 
 Choose sound from both motion and meaning:
 
@@ -88,6 +88,26 @@ Choose sound from both motion and meaning:
 | typing/reveal by characters | text entry or typed explanation | typing/UI sound |
 | confirmation or completion | conclusion, confirmed result, final CTA | ding/prompt, used sparingly |
 | warning pulse/shake | genuine risk or warning | warning cue |
+
+### Motion-family candidates
+
+Build animation and SFX candidates around the visible motion family. These are
+generic search families, not Jianying preset names or fixed pairings:
+
+| Motion family | Typical use | SFX families to audition |
+|---|---|---|
+| `directional_sweep` | Fast travel, wipe, or directional focus | Whoosh or sweep |
+| `luminous_reveal` | A restrained reveal, bright fade, or highlighted fact | Soft pop, sparkle, or light chime |
+| `numeric_glitch` | A deliberate correction, contrast, or unusually forceful number | Short impact or digital click |
+| `completion_glow` | A result landing, confirmation mark, or resolved benefit | Brief ping or restrained bell |
+| `expressive_reaction` | An intentionally playful or exaggerated reaction | Short whoop, cartoon pop, or novelty cue |
+
+Use `numeric_glitch` only when the message and visual treatment call for a
+disruption. Ordinary numbers and technical terms do not need an impact by
+default. Keep the motion-family label separate from the source preset identity;
+resolve actual presets through the current case catalog and pool.
+Use `expressive_reaction` only when the requested tone supports it; it is not a
+default for restrained or technical packaging.
 
 These are families, not fixed asset names. Select an actual asset only after auditioning or identifying a user-approved reusable segment.
 
@@ -149,4 +169,4 @@ Use the generic relative-layout registry. The template describes group slots and
 
 ## Project-profile boundary
 
-Font, coordinate, line-length, color, layer, animation, and sound preferences are project or user profiles. Load them from an external project case reference at runtime; never promote a single project's values into this reusable reference. The current saved manual timeline remains authoritative when a project profile is supplied.
+Font, coordinate, line-length, color, layer, animation, and sound preferences are project or user profiles. Load them from an external project case reference at runtime; never promote a single project's values into this reusable reference. Generic registry offsets describe relative template relationships only; verify them against the current subtitle anchor, safe area, and rendered result. The current saved manual timeline remains authoritative when a project profile is supplied.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only packaging analysis CLI.
+"""Packaging analysis and schema 1.2 draft apply CLI.
 
-The command intentionally does not clone, apply, or write a Jianying draft.
-Those operations remain in jianying-editor.
+Analysis and validation commands are read-only. The apply command translates a
+validated schema 1.2 plan and uses jianying-editor's existing transaction API.
 """
 
 from __future__ import annotations
@@ -18,11 +18,13 @@ from typing import Any
 from packaging_tools.io import BlockedReportError, dump_json, load_json, text_result, unwrap_report, write_json
 from packaging_tools.inventory import inventory_templates_and_materials
 from packaging_tools.audio_inventory import classify_audio_events
+from packaging_tools.draft_apply import apply_packaging_plan
 from packaging_tools.layer_discovery import discover_packaging_layers
 from packaging_tools.learning import build_learning_report, validate_learning_report
 from packaging_tools.motion_check import check_motion_reuse
 from packaging_tools.layout_resolver import resolve_relative_layout
 from packaging_tools.reference_diff import diff_manual_reference
+from packaging_tools.replica_audit import classify_replica_errors
 from packaging_tools.result import exit_code, result
 from packaging_tools.snapshot import build_packaging_snapshot
 from packaging_tools.sound_check import check_sound_operations
@@ -68,10 +70,16 @@ def _run_editor_readonly(root: Path, command: list[str]) -> dict[str, Any]:
         encoding="utf-8",
         check=False,
     )
-    if completed.returncode != 0:
-        raise RuntimeError(f"editor read-only command failed ({completed.returncode}): {completed.stderr.strip() or completed.stdout.strip()}")
-    parsed = _parse_editor_json(completed.stdout)
-    return {"command": command, "result": parsed}
+    try:
+        parsed = _parse_editor_json(completed.stdout)
+    except json.JSONDecodeError:
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"editor read-only command failed ({completed.returncode}): "
+                f"{completed.stderr.strip() or completed.stdout.strip()}"
+            ) from None
+        raise
+    return {"command": command, "result": parsed, "returncode": completed.returncode}
 
 
 def _preflight(args: argparse.Namespace) -> dict[str, Any]:
@@ -89,12 +97,42 @@ def _preflight(args: argparse.Namespace) -> dict[str, Any]:
         return result("packaging_preflight", errors=[str(exc)], status="blocked")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return result("packaging_preflight", input_errors=[str(exc)], status="blocked")
-    editor_errors = []
+    manifests = []
     for call in calls:
         payload = call.get("result")
-        if isinstance(payload, dict) and payload.get("ok") is False:
-            editor_errors.extend(str(error) for error in payload.get("errors", []))
-    return result("packaging_preflight", data={"draft": draft, "timeline": timeline, "editor_readonly_calls": calls}, errors=editor_errors, summary={"command_count": len(calls)})
+        if isinstance(payload, dict):
+            manifest = payload.get("replica_manifest")
+            if isinstance(manifest, dict):
+                manifests.append(manifest)
+    replica_manifest = manifests[-1] if manifests else None
+    editor_errors = []
+    editor_warnings = []
+    for call in calls:
+        payload = call.get("result")
+        if not isinstance(payload, dict):
+            continue
+        raw_errors = payload.get("errors")
+        if isinstance(raw_errors, list):
+            normalized_errors = [str(error) for error in raw_errors]
+        elif raw_errors in (None, ""):
+            normalized_errors = []
+        else:
+            normalized_errors = [str(raw_errors)]
+        command = call.get("command")
+        command_name = str(command[0]) if isinstance(command, list) and command else "editor command"
+        if payload.get("ok") is False and not normalized_errors:
+            normalized_errors = [f"{command_name} reported failure without structured errors"]
+        if payload.get("ok") is False or normalized_errors:
+            errors, warnings = classify_replica_errors(
+                normalized_errors,
+                payload.get("replica_manifest") or replica_manifest,
+            )
+            editor_errors.extend(errors)
+            editor_warnings.extend(warnings)
+        raw_warnings = payload.get("warnings", [])
+        if isinstance(raw_warnings, list):
+            editor_warnings.extend(str(warning) for warning in raw_warnings)
+    return result("packaging_preflight", data={"draft": draft, "timeline": timeline, "editor_readonly_calls": calls}, errors=editor_errors, warnings=editor_warnings, summary={"command_count": len(calls)})
 
 
 def _run(args: argparse.Namespace) -> dict[str, Any]:
@@ -124,6 +162,25 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             return result("packaging_generic_content_validation", data=report, errors=report.get("errors", []), input_errors=report.get("input_errors", []), warnings=report.get("warnings", []))
     if command == "preflight":
         return _preflight(args)
+    if command == "apply":
+        plan = unwrap_report(load_json(args.plan))
+        catalog = unwrap_report(load_json(args.catalog)) if args.catalog else None
+        pools = unwrap_report(load_json(args.pools)) if args.pools else None
+        animation_capabilities = unwrap_report(load_json(args.animation_capabilities)) if args.animation_capabilities else None
+        existing_audio = unwrap_report(load_json(args.existing_audio)) if args.existing_audio else None
+        return apply_packaging_plan(
+            plan,
+            draft_path=args.draft,
+            timeline=args.timeline,
+            editor_root=_editor_root(args.editor_root),
+            sound_catalog=catalog,
+            sound_pools=pools,
+            animation_cache_root=args.animation_cache_root,
+            animation_capabilities=animation_capabilities,
+            animation_version=args.animation_version,
+            existing_audio=existing_audio,
+            apply=args.apply,
+        )
     if command == "snapshot":
         return build_packaging_snapshot(unwrap_report(load_json(args.observation)))
     if command == "diff":
@@ -229,6 +286,19 @@ def _parser() -> argparse.ArgumentParser:
     preflight.add_argument("--draft", required=True)
     preflight.add_argument("--timeline", required=True)
     preflight.add_argument("--editor-root")
+
+    apply = sub.add_parser("apply", help="dry-run or apply a schema 1.2 packaging plan")
+    apply.add_argument("--draft", required=True)
+    apply.add_argument("--timeline", required=True, help="source timeline selector")
+    apply.add_argument("--plan", required=True)
+    apply.add_argument("--catalog", help="current case sound catalog JSON")
+    apply.add_argument("--pools", help="current case motion sound pools JSON")
+    apply.add_argument("--animation-cache-root", help="current Jianying User Data/Cache root")
+    apply.add_argument("--animation-capabilities", help="same-version, native-verified text animation capability JSON")
+    apply.add_argument("--animation-version", help="installed Jianying version if it cannot be read from the editor DLL")
+    apply.add_argument("--existing-audio", help="optional current audio/dialogue interval evidence JSON")
+    apply.add_argument("--editor-root", help="jianying-editor skill root")
+    apply.add_argument("--apply", action="store_true", help="write to a clone; default is dry-run")
 
     snapshot = sub.add_parser("snapshot")
     snapshot.add_argument("--observation", required=True)

@@ -10,6 +10,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from ..override_contract import DIRECT_OVERRIDE_FIELDS
+except ImportError:  # direct loading by the standalone validator tests
+    from packaging_tools.override_contract import DIRECT_OVERRIDE_FIELDS
+
 
 GROUP_KINDS = {
     "question", "answer", "opening_theme", "ending_theme", "other_key",
@@ -421,6 +426,7 @@ def validate_layout(
     warnings: list[str],
     *,
     final_phase: bool,
+    require_numeric_safe_zone: bool = False,
     schema_v12: bool,
     semantic_refs: set[str],
     auxiliary_refs: set[str],
@@ -529,8 +535,24 @@ def validate_layout(
     if not isinstance(constraints, dict):
         errors.append(f"{path}.constraints: must be an object")
     else:
-        if final_phase and not is_nonempty_string(constraints.get("safe_zone")):
-            errors.append(f"{path}.constraints.safe_zone: required for final layout validation")
+        safe_zone = constraints.get("safe_zone")
+        if final_phase and isinstance(safe_zone, dict):
+            bounds = [safe_zone.get(key) for key in ("x_min", "x_max", "y_min", "y_max")]
+            if not all(is_number(bound) for bound in bounds):
+                errors.append(f"{path}.constraints.safe_zone: numeric safe-zone bounds are required")
+            elif safe_zone["x_min"] >= safe_zone["x_max"] or safe_zone["y_min"] >= safe_zone["y_max"]:
+                errors.append(f"{path}.constraints.safe_zone: bounds must be ordered")
+            elif safe_zone["x_min"] < -1 or safe_zone["x_max"] > 1 or safe_zone["y_min"] < -1 or safe_zone["y_max"] > 1:
+                errors.append(f"{path}.constraints.safe_zone: bounds must be inside normalized canvas coordinates")
+        elif final_phase:
+            if require_numeric_safe_zone:
+                errors.append(f"{path}.constraints.safe_zone: numeric safe-zone bounds are required for final apply")
+            elif not is_nonempty_string(safe_zone):
+                errors.append(f"{path}.constraints.safe_zone: required for final layout review")
+            else:
+                warnings.append(f"{path}.constraints.safe_zone: named safe zone is review-only until its bounds are measured")
+        elif safe_zone is not None and not isinstance(safe_zone, (str, dict)):
+            errors.append(f"{path}.constraints.safe_zone: must be a name or numeric bounds object")
         collision = constraints.get("collision")
         if collision is not None and collision not in LAYOUT_COLLISION_POLICIES:
             errors.append(f"{path}.constraints.collision: invalid")
@@ -1012,11 +1034,18 @@ def validate_plan(
                 errors.append("execution.phase=final requires approved subtitle alignment")
         if is_v12 and phase not in PACKAGING_PHASES:
             errors.append("execution.phase: must be staging or final")
+        if is_v12 and mode == "apply" and phase in PACKAGING_PHASES:
+            source_status = data.get("source")
+            content_status = source_status.get("content_pass") if isinstance(source_status, dict) else None
+            if content_status != "approved":
+                errors.append("execution.mode=apply requires source.content_pass=approved")
+            if alignment_status != "approved":
+                errors.append("execution.mode=apply requires source.subtitle_alignment.status=approved")
         if is_v12 and phase == "final":
             staging = data.get("staging")
             if not isinstance(staging, dict) or staging.get("review_status") != "approved":
                 errors.append("execution.phase=final requires staging.review_status=approved")
-            if alignment_status != "approved":
+            if alignment_status != "approved" and mode != "apply":
                 errors.append("execution.phase=final requires approved subtitle alignment")
             comparison = data.get("comparison")
             if isinstance(comparison, dict) and comparison.get("remap_status") not in {"not_required", "verified"}:
@@ -1064,6 +1093,7 @@ def validate_plan(
         presets = []
     preset_ids: set[str] = set()
     preset_allowed_overrides: dict[str, set[str]] = {}
+    preset_template_segments: dict[str, set[str]] = {}
     for index, preset in enumerate(presets):
         path = f"presets[{index}]"
         if not isinstance(preset, dict):
@@ -1087,12 +1117,14 @@ def validate_plan(
         else:
             if not is_nonempty_string(template_source.get("timeline")):
                 errors.append(f"{path}.template_source.timeline: required non-empty string")
-            validate_string_list(
+            source_segment_ids = validate_string_list(
                 f"{path}.template_source.segment_ids",
                 template_source.get("segment_ids"),
                 errors,
                 require_nonempty=True,
             )
+            if preset_id is not None:
+                preset_template_segments[preset_id] = set(source_segment_ids)
             if "material_ids" in template_source:
                 validate_string_list(
                     f"{path}.template_source.material_ids",
@@ -1275,6 +1307,13 @@ def validate_plan(
                         errors.append(f"{vpath}.preset_id: unknown preset {preset_id!r}")
             if operation == "clone_template" and not preset_id_valid:
                 errors.append(f"{vpath}.preset_id: required for clone_template")
+            if operation == "clone_template" and preset_id_valid:
+                source_segment_ids = preset_template_segments.get(preset_id, set())
+                template_segment_id = visual.get("template_segment_id")
+                if len(source_segment_ids) > 1 and not is_nonempty_string(template_segment_id):
+                    errors.append(f"{vpath}.template_segment_id is required when the preset has multiple source segments")
+                elif template_segment_id is not None and template_segment_id not in source_segment_ids:
+                    errors.append(f"{vpath}.template_segment_id must be listed in preset.template_source.segment_ids")
 
             if operation_valid and operation in EXISTING_SEGMENT_VISUAL_OPERATIONS:
                 validate_locator(
@@ -1308,21 +1347,27 @@ def validate_plan(
 
             if "text" in visual and not isinstance(visual.get("text"), str):
                 errors.append(f"{vpath}.text: must be a string")
-            if operation_valid and operation in {"clone_template", "modify_text"} and object_type == "text" and not is_nonempty_string(visual.get("text")):
+            if operation_valid and operation in {"clone_template", "copy_from_subtitle", "modify_text"} and object_type == "text" and not is_nonempty_string(visual.get("text")):
                 errors.append(f"{vpath}.text: required for {operation}")
 
-            if is_v12 and object_type == "text" and is_nonempty_string(visual.get("text")):
+            if is_v12 and object_type == "text" and (
+                operation == "copy_from_subtitle" or is_nonempty_string(visual.get("text"))
+            ):
                 text_ref = visual.get("text_ref")
                 if not is_nonempty_string(text_ref):
                     errors.append(f"{vpath}.text_ref: required for schema 1.2 text operations")
-                elif text_ref in semantic_refs:
+                text_hash = visual.get("text_hash")
+                if operation == "copy_from_subtitle" and not is_nonempty_string(text_hash):
+                    errors.append(f"{vpath}.text_hash: required for copy_from_subtitle text")
+                elif operation == "copy_from_subtitle" and is_nonempty_string(visual.get("text")) and sha256_text(visual["text"]) != text_hash:
+                    errors.append(f"{vpath}: text_hash does not match visual.text")
+                if text_ref in semantic_refs:
                     expected_hash = final_subtitle_hashes.get(text_ref)
-                    text_hash = visual.get("text_hash")
                     if not is_nonempty_string(text_hash):
                         errors.append(f"{vpath}.text_hash: required for final subtitle text")
                     elif expected_hash and text_hash != expected_hash:
                         errors.append(f"{vpath}: text_mismatch with final subtitle unit {text_ref!r}")
-                    if expected_hash and sha256_text(visual["text"]) != expected_hash:
+                    if expected_hash and is_nonempty_string(visual.get("text")) and sha256_text(visual["text"]) != expected_hash:
                         errors.append(f"{vpath}: text_mismatch with final subtitle unit {text_ref!r}")
                 elif text_ref not in auxiliary_refs:
                     errors.append(
@@ -1340,6 +1385,30 @@ def validate_plan(
                 )
                 for name, value in overrides.items():
                     validate_override(f"{vpath}.overrides.{name}", value, errors)
+                    if name not in DIRECT_OVERRIDE_FIELDS:
+                        errors.append(f"{vpath}.overrides.{name}: no verified adapter mapping")
+                    if name in {"position_x", "position_y", "scale_x", "scale_y", "uniform_scale", "start_us", "duration_us"}:
+                        if isinstance(value, dict) and value.get("mode") == "absolute" and not is_number(value.get("value")):
+                            errors.append(f"{vpath}.overrides.{name}: absolute value must be a finite number")
+                    elif name == "visible" and (
+                        not isinstance(value, dict)
+                        or value.get("mode") != "absolute"
+                        or not isinstance(value.get("value"), bool)
+                    ):
+                        errors.append(f"{vpath}.overrides.visible requires an absolute boolean value")
+                    if isinstance(value, dict) and value.get("mode") == "absolute" and is_number(value.get("value")):
+                        absolute_value = value["value"]
+                        if name in {"scale_x", "scale_y", "uniform_scale"} and absolute_value <= 0:
+                            errors.append(f"{vpath}.overrides.{name}: absolute value must be positive")
+                        elif name == "start_us" and absolute_value < 0:
+                            errors.append(f"{vpath}.overrides.start_us: absolute value must be non-negative")
+                        elif name == "duration_us" and absolute_value <= 0:
+                            errors.append(f"{vpath}.overrides.duration_us: absolute value must be positive")
+                    if name == "global_alpha":
+                        if not isinstance(value, dict) or value.get("mode") != "absolute":
+                            errors.append(f"{vpath}.overrides.global_alpha requires an absolute value")
+                        elif not is_number(value.get("value")) or not 0 <= value["value"] <= 1:
+                            errors.append(f"{vpath}.overrides.global_alpha.value must be between 0 and 1")
                     if preset_id_valid and preset_id in preset_allowed_overrides and name not in allowed_for_preset:
                         errors.append(
                             f"{vpath}.overrides.{name}: not listed in preset {preset_id!r}.allowed_overrides"
@@ -1377,6 +1446,30 @@ def validate_plan(
                             f"{vpath}.{field}: falls outside the group range; verify intentional staging"
                         )
 
+            animation = visual.get("animation")
+            if animation is not None:
+                if not is_v12:
+                    errors.append(f"{vpath}.animation: supported only for schema 1.2")
+                if not isinstance(animation, dict):
+                    errors.append(f"{vpath}.animation: must be an object")
+                else:
+                    if not is_nonempty_string(animation.get("resource_id")):
+                        errors.append(f"{vpath}.animation.resource_id: required")
+                    animation_duration = animation.get("duration_us")
+                    if not is_int(animation_duration) or animation_duration <= 0:
+                        errors.append(f"{vpath}.animation.duration_us: must be a positive integer")
+                    visible_duration = visual_duration if is_int(visual_duration) and visual_duration > 0 else (
+                        group_range[1] - group_range[0] if group_range else None
+                    )
+                    if not is_int(visible_duration) or visible_duration <= 0:
+                        errors.append(f"{vpath}.animation.duration_us: requires a known text row visible window")
+                    elif is_int(animation_duration) and animation_duration > visible_duration:
+                        errors.append(f"{vpath}.animation.duration_us exceeds the text row visible window")
+                    if object_type != "text":
+                        errors.append(f"{vpath}.animation: requires a text object")
+                    if phase == "staging":
+                        errors.append(f"{vpath}.animation: staging must not add final entrance animations")
+
             if operation_valid and operation in NEW_OBJECT_VISUAL_OPERATIONS:
                 register_track_interval(
                     vpath,
@@ -1410,6 +1503,7 @@ def validate_plan(
                         errors,
                         warnings,
                         final_phase=phase == "final",
+                        require_numeric_safe_zone=mode == "apply",
                         schema_v12=True,
                         semantic_refs=semantic_refs,
                         auxiliary_refs=auxiliary_refs,

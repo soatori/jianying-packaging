@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .result import result
@@ -9,6 +10,14 @@ from .result import result
 
 def _number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and value not in {float("inf"), float("-inf")}
+
+
+def rotated_aabb_size(width: float, height: float, rotation: float) -> tuple[float, float]:
+    if not all(_number(value) for value in (width, height, rotation)):
+        raise ValueError("rotated bounds require finite numeric width, height, and rotation")
+    angle = math.radians(float(rotation))
+    cosine, sine = abs(math.cos(angle)), abs(math.sin(angle))
+    return cosine * float(width) + sine * float(height), sine * float(width) + cosine * float(height)
 
 
 def _templates(registry: Any) -> dict[str, dict[str, Any]]:
@@ -115,7 +124,7 @@ def resolve_relative_layout(group: Any, registry: Any, anchor: Any) -> dict[str,
                 raise TypeError(f"slot {slot_id}: transform {key} must be numeric or an object")
             if key == "scale" and isinstance(value, dict) and any(not _number(value.get(axis)) or value.get(axis) <= 0 for axis in ("x", "y")):
                 raise TypeError(f"slot {slot_id}: transform scale must be positive")
-            if key == "rotation" and not _number(value):
+            if key == "rotation" and (not _number(value) or isinstance(value, bool)):
                 raise TypeError(f"slot {slot_id}: transform rotation must be numeric")
         inherited.update(own)
         return inherited
@@ -163,24 +172,44 @@ def resolve_relative_layout(group: Any, registry: Any, anchor: Any) -> dict[str,
     if not isinstance(constraints, dict):
         errors.append("layout.constraints must be an object")
         constraints = {}
+    warnings: list[str] = []
     if isinstance(constraints, dict):
         safe_zone = constraints.get("safe_zone")
         if isinstance(safe_zone, dict):
             bounds = {key: safe_zone.get(key) for key in ("x_min", "x_max", "y_min", "y_max")}
             if all(_number(value) for value in bounds.values()):
                 for slot_id, item in resolved.items():
-                    if not (bounds["x_min"] <= item["x"] <= bounds["x_max"] and bounds["y_min"] <= item["y"] <= bounds["y_max"]):
+                    slot = slots.get(slot_id, {})
+                    size = slot.get("bounds", slot.get("size")) if isinstance(slot, dict) else None
+                    rotation = item.get("transform", {}).get("rotation", 0.0) if isinstance(item.get("transform"), dict) else 0.0
+                    if isinstance(size, dict) and _number(size.get("width")) and _number(size.get("height")):
+                        rotated_width, rotated_height = rotated_aabb_size(size["width"], size["height"], rotation)
+                    else:
+                        rotated_width, rotated_height = 0.0, 0.0
+                    half_width = rotated_width / 2
+                    half_height = rotated_height / 2
+                    if not (
+                        bounds["x_min"] <= item["x"] - half_width
+                        and item["x"] + half_width <= bounds["x_max"]
+                        and bounds["y_min"] <= item["y"] - half_height
+                        and item["y"] + half_height <= bounds["y_max"]
+                    ):
                         errors.append(f"slot {slot_id}: resolved position is outside safe-zone bounds")
         if "collision" in constraints and constraints.get("collision") not in {"warn", "block", "intentional_overlap", "intentional_attachment"}:
             errors.append("layout constraints.collision is invalid")
         if "safe_zone" in constraints and not isinstance(safe_zone, dict):
-            errors.append("layout constraints.safe_zone must be an object")
+            if isinstance(safe_zone, str) and safe_zone.strip():
+                warnings.append("named safe zone is review-only until its bounds are measured")
+            else:
+                errors.append("layout constraints.safe_zone must be numeric bounds or a review-only name")
         if isinstance(safe_zone, dict):
             bounds = {key: safe_zone.get(key) for key in ("x_min", "x_max", "y_min", "y_max")}
             if not all(_number(value) for value in bounds.values()):
                 errors.append("layout safe-zone bounds must be numeric")
             elif bounds["x_min"] > bounds["x_max"] or bounds["y_min"] > bounds["y_max"]:
                 errors.append("layout safe-zone bounds must be ordered")
+            elif bounds["x_min"] < -1 or bounds["x_max"] > 1 or bounds["y_min"] < -1 or bounds["y_max"] > 1:
+                errors.append("layout safe-zone bounds must be inside normalized canvas coordinates")
         if constraints.get("collision") == "block":
             coordinates: dict[tuple[float, float], str] = {}
             for slot_id, item in resolved.items():
@@ -196,8 +225,10 @@ def resolve_relative_layout(group: Any, registry: Any, anchor: Any) -> dict[str,
             if not isinstance(bounds, dict) or not all(_number(bounds.get(key)) and bounds.get(key) >= 0 for key in ("width", "height")):
                 errors.append(f"slot {slot_id}: bounds must contain non-negative numeric width/height")
                 continue
-            half_width = bounds["width"] / 2
-            half_height = bounds["height"] / 2
+            rotation = item.get("transform", {}).get("rotation", 0.0) if isinstance(item.get("transform"), dict) else 0.0
+            rotated_width, rotated_height = rotated_aabb_size(bounds["width"], bounds["height"], rotation)
+            half_width = rotated_width / 2
+            half_height = rotated_height / 2
             if not (-1 <= item["x"] - half_width and item["x"] + half_width <= 1 and -1 <= item["y"] - half_height and item["y"] + half_height <= 1):
                 errors.append(f"slot {slot_id}: resolved bounds exceed normalized canvas")
             if isinstance(constraints, dict) and constraints.get("collision") == "block":
@@ -208,11 +239,13 @@ def resolve_relative_layout(group: Any, registry: Any, anchor: Any) -> dict[str,
                     other_bounds = other_slot.get("bounds", other_slot.get("size")) if isinstance(other_slot, dict) else None
                     if not isinstance(other_bounds, dict) or not all(_number(other_bounds.get(key)) and other_bounds.get(key) >= 0 for key in ("width", "height")):
                         continue
+                    other_rotation = other.get("transform", {}).get("rotation", 0.0) if isinstance(other.get("transform"), dict) else 0.0
+                    other_width, other_height = rotated_aabb_size(other_bounds["width"], other_bounds["height"], other_rotation)
                     if slot_id >= other_id:
                         continue
                     if (
-                        abs(item["x"] - other["x"]) < (bounds["width"] + other_bounds["width"]) / 2
-                        and abs(item["y"] - other["y"]) < (bounds["height"] + other_bounds["height"]) / 2
+                        abs(item["x"] - other["x"]) < (rotated_width + other_width) / 2
+                        and abs(item["y"] - other["y"]) < (rotated_height + other_height) / 2
                     ):
                         errors.append(f"layout collision: slot bounds for {slot_id!r} and {other_id!r} overlap")
-    return result("packaging_layout_resolution", data={"template_id": template_id, "slots": resolved}, errors=errors, summary={"slot_count": len(resolved)})
+    return result("packaging_layout_resolution", data={"template_id": template_id, "slots": resolved}, errors=errors, warnings=warnings, summary={"slot_count": len(resolved)})

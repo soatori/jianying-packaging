@@ -20,12 +20,21 @@ An inherited template property is omitted. Never encode inheritance as a guessed
 | Domain | Variables |
 |---|---|
 | Timing | `start_us`, `duration_us`, `end_us`, `source_start_us`, `source_duration_us`, `audio_offset_us` |
-| Transform | `position_x`, `position_y`, `scale_x`, `scale_y`, `uniform_scale`, `rotation`, `opacity`, `anchor_x`, `anchor_y` |
+| Transform | `position_x`, `position_y`, `scale_x`, `scale_y`, `uniform_scale`, `rotation`, `opacity`, `global_alpha`, `anchor_x`, `anchor_y` |
 | Text | `text`, `font_family`, `font_resource_id`, `font_size`, `font_weight`, `letter_spacing`, `line_spacing`, `alignment`, `fill_color`, `stroke_width`, `stroke_color`, `shadow`, `background`, `text_box` |
 | Motion | `animation_in`, `animation_out`, `animation_loop`, `animation_duration_us`, `animation_peak_offset_us`, `keyframes` |
 | Video/image | `crop`, `mask`, `feather`, `blend`, `speed`, `freeze`, `transform`, `keyframes` |
 | Audio | `volume`, `last_nonzero_volume`, `fade_in_us`, `fade_out_us`, `speed`, `channel_mapping`, `source_range`, `target_range` |
 | Composition | `track_id`, `track_order`, `render_index`, `track_render_index`, `visible`, `group_id` |
+
+The semantic list is broader than the direct write adapter. `visual.overrides`
+is limited to `position_x`, `position_y`, `scale_x`, `scale_y`,
+`uniform_scale`, `start_us`, `duration_us`, `visible`, and `global_alpha`.
+`rotation`, `opacity`, `anchor_x`, and other semantic variables require a
+separate verified property or layout adapter; adding them to a preset allow
+list does not make them executable. Direct scale results must stay positive;
+direct timerange starts must stay non-negative and durations positive, including
+after relative deltas are applied to the current draft prototype.
 
 ## Representations to inspect by object
 
@@ -45,6 +54,17 @@ Common representations to inspect include:
 - layer and visibility: track order, `track_render_index`, `render_index`, and segment `visible`;
 - animation/template dependencies: segment `extra_material_refs` leading to material animations, effects, and drafts.
 
+Automatic layout uses the text material's local `font_path` and confirmed
+`font_size` (or `content.styles[].size`) with exact local glyph metrics. A font
+family name or font resource ID alone is not a measurable file path; if the
+runtime file/size mapping cannot be resolved, block automatic layout and
+request a reviewed manual layout.
+
+For transparency, map `opacity` to `segment.global_alpha` only when the current
+text segment prototype contains that field. Keep the numeric range 0–1 and
+keep visibility separate in `segment.visible`; do not invent a field or treat
+alpha zero as hidden.
+
 Do not update only one representation. Either clone the complete confirmed prototype or update every representation that exists and verify the UI result.
 
 ### Video
@@ -56,7 +76,11 @@ Common representations to inspect include:
 - material path, dimensions, duration, and `crop`;
 - transition materials and referenced animation/effect materials.
 
-Rotation, opacity, masks, feather, blend, freeze, speed, and keyframes are semantic variables but were not demonstrated by this packaging workflow. Use a working prototype or run a small cloned-timeline experiment before relying on raw fields.
+Rotation, masks, feather, blend, freeze, speed, and keyframes remain
+version-dependent semantic variables. Use a same-version working prototype or
+reversible clone experiment before relying on raw fields. The normalized
+layout preview and alpha mapping do not prove native rendering; reopen Jianying
+to verify the result.
 
 ### Image, PNG, and sticker
 
@@ -104,7 +128,7 @@ The UI and stored coordinates may use different units, scales, origins, or sign 
   },
   "inherits": ["style", "animation", "geometry", "layering"],
   "default_parameters": {},
-  "allowed_overrides": ["text", "start_us", "duration_us", "position_y"],
+  "allowed_overrides": ["start_us", "duration_us", "position_y"],
   "requires_visual_verification": true
 }
 ```

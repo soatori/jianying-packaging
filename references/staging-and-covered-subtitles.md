@@ -1,18 +1,34 @@
 # Packaging staging and covered subtitles
 
-Packaging starts from an approved content pass and an approved subtitle-alignment plan. It first creates a reversible working timeline and an upper review layer.
+Creating or updating a staging timeline requires an approved content pass and an approved subtitle-alignment plan. It creates a reversible working timeline and an upper review layer.
 
-This document also carries the text-track copy/staging operations formerly owned by a standalone `jianying-track-copy-staging` skill (now merged here). All project I/O still delegates to `jianying-editor`.
+This document also carries the text-track copy/staging operations formerly owned by a standalone `jianying-track-copy-staging` skill (now merged here). The schema 1.2 `packaging_tool.py apply` adapter translates approved operations and uses `jianying-editor`'s existing transactional project API; do not use `jianying-editor apply-plan` for packaging.
 
 ## Staging sequence
 
-1. Ask where the staging surface belongs: the current working timeline (in-place, with backup) or a fresh clone. The clone is the safe default, but users often review only the timeline they had open and will report "nothing changed" when staging landed on a clone they never opened. Record the answer before writing.
-2. Clone the source timeline through `jianying-editor` (when a clone was chosen).
+1. Use a fresh clone by default and give it a purpose-specific, unique name. Tell the user which copy contains the staging surface. Use in-place editing only when the user explicitly requests it and the plan records the authorized exception and backup. Ask about the target only when the user's instruction leaves it ambiguous. A request to create or update staging authorizes that staging write; by itself, it does not authorize final application.
+2. Apply the schema 1.2 staging plan through `python scripts/packaging_tool.py apply --draft <draft> --timeline <source> --plan <plan.json> --apply`. The adapter creates the default clone through `JianyingProject` and writes the upper review layer through its existing transaction API. It blocks unless content and subtitle alignment are approved.
+   Closing JianYing before an apply is still recommended. The editor transaction's close check is advisory: a warning is carried in the apply report while the clone/write/read-back transaction continues. Dry-runs do not perform this close check.
 3. Keep the source subtitle track unchanged and visible.
 4. Copy complete candidate sentences to an upper track, preserving the approved sentence segmentation. Use phrase-, word-, or character-level fragments only when the user explicitly requests that granularity.
 5. Mark `packaging_staging=reviewing` and let the user review emphasis, wording, timing, segmentation, overlap, and obstruction.
 6. Record any user edits against the current saved staging timeline.
-7. Only after review approval apply templates, motion, effects, transitions, color, transform, background, and sound.
+7. Only after review approval, and only when final application was requested and authorized, apply templates, motion, effects, transitions, color, transform, background, and sound.
+
+## Staging phase exits
+
+At each exit, report the current staging state and the next action. Do not
+advance from review to final application without approval and a request for
+that final phase.
+
+| Phase result | Next-step suggestion |
+|---|---|
+| Clone and upper review layer are saved | Set `packaging_staging=reviewing`; identify the copy and ask the user to review emphasis, wording, timing, overlap, and obstruction. |
+| User returns staging edits | Re-read the current saved timeline, record the edits, and refresh any plan/report invalidated by the new snapshot. Keep staging in `reviewing`. |
+| Staging is approved | Continue to final planning only if final application was requested and its gates pass; otherwise deliver the approved staging state and stop. |
+| Snapshot is stale or text/layout differs | Rebuild the affected plan and review surface from current saved state before further writes. |
+| A semantic or factual issue is found | Return that unit to `jianying-rough-cut`; do not absorb it as display-only packaging. |
+| Final apply is read back by the editor | Reopen Jianying and complete the visual/audio review before calling the package verified. |
 
 ## Phase-specific covered-subtitle policy
 
@@ -37,12 +53,12 @@ Before either mutation, re-decode the current saved source and target and compar
 ## Track copy and disable mechanics
 
 - Deep-copy each copied segment's text material under a new UUID and repoint `material_id`; a copy that shares the source material pollutes color/animation edits on the original.
-- Clear `extra_material_refs` on copies; motion is attached later per the approved packaging plan.
+- In staging, `copy_from_subtitle` must clear `extra_material_refs` and must not clone their material closure; motion and effects are attached later per the approved packaging plan. Final copies preserve the complete closure only when the final plan explicitly carries it.
 - When a copy's tail is extended (hold) into the next sentence's span, same-track time overlap will fail validation. Split alternating sentence positions across two upper tracks (e.g. sentences 1/3 on one track, 2 on the next).
 - Locate segments by `(track_id, start_us)`, never by text keyword: the subtitle track contains identical wording and will silently mismatch.
 - After explicit user approval, disable only the covered original segments on the clone with the editor-native per-segment `"visible": false` flag (what the JianYing eye-icon toggle writes; verified on 11.5). Require backup, read-back, and visual confirmation. `clip.transform.x = 99` (move off-canvas) is a reversible fallback only when the native flag is unavailable; it changes the stored display position and users may reject it. Track-level `is_hide` and `global_alpha = 0` do not work for text in 11.5. Never delete, and never disable the source timeline.
-- Group layout defaults: the group's last sentence stays pinned at the subtitle line position; only sentences that temporally overlap an earlier held sentence are raised. A stacked line step of about `0.10` normalized units fits font size 10; `0.16+` reads as too far apart. Let the user's manual corrections set the final rule and copy their measured values. These tiers are scaffolding: once the user fine-tunes per-line positions, later passes must preserve each adjusted value and never re-flatten the group back to uniform steps.
-- Left/right staggered pairs are geometrically bounded: at font size 10 each CJK glyph is roughly `0.15` normalized x-units (calibrate from a screenshot). Two simultaneously visible lines can be side-by-side only while their combined character count stays within the canvas safe width (about 12 glyphs at fs10); beyond that keep the group centered.
+- Group layout rule: keep the group's last sentence at the approved subtitle line position; raise only sentences that overlap an earlier held sentence. Derive spacing from the active project profile and verified subtitle transform. Preserve the user's manual per-line corrections on later passes; never flatten them back to uniform spacing.
+- Use side-by-side lines only when both fit inside the verified canvas safe area using the active font, transform, and rendered bounds. If those bounds are unavailable or uncertain, keep the group centered or send it for visual review.
 
 ## Same-screen group layout
 

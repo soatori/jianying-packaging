@@ -22,6 +22,12 @@ use these relationships:
 These reports are evidence for review. They do not select assets or write a
 Jianying draft.
 
+The schema 1.2 `apply` adapter also checks dialogue collisions before a sound
+write. It derives intervals only from recognized current-draft audio roles; if
+those roles do not identify dialogue, supply explicit intervals through
+`packaging_tool.py apply --existing-audio <dialogue-intervals.json>`. Missing
+dialogue evidence blocks final/apply sound operations.
+
 
 ## Event-level animation-to-SFX coverage
 
@@ -68,3 +74,28 @@ Build and review the matrix with these rules:
 planned sound operations; neither establishes event coverage for every
 animation in the current timeline. Keep the matrix as a separate read-only
 audit result.
+
+## Candidate-pool evidence gates
+
+Build candidate pools from the current readable primary timeline and keep
+source-specific names, IDs, paths, and timecodes in the external case catalog
+and pools. Record evidence separately; one check does not stand in for another.
+
+| Evidence | Establishes | Does not establish |
+|---|---|---|
+| Primary timeline decodes and parses | The observed event and material records can be read | That referenced media is present or renders |
+| Referenced media exists and a media probe parses it | Container/codec metadata and stream presence | Full-stream integrity, semantic fit, audible quality, or correct visual behavior |
+| A full decoder pass succeeds | The referenced media payload can be read through its duration | Semantic fit, audible quality, or correct visual behavior |
+| Entry, peak, and exit preview checked | The motion family and dynamic readability at sampled points | Native Jianying playback or sound quality |
+| Waveform and listening review completed | Audible onset, duration, masking, and dialogue fit | That another project or version will render identically |
+| Current project reopened in Jianying and reviewed | Presentation and playback in that project/version | Suitability for every future case |
+
+Reject a candidate whose primary content is unreadable or whose role-specific
+media closure is missing or cannot be decoded. A missing video blocks using a
+timeline as a visual/motion source; it does not by itself invalidate a separate
+SFX asset whose own file passes a full decode. Keep that asset audio-only and
+provisional until listening review. Keep a readable primary with replica/backup
+drift, placeholder animation labels, or no listening review provisional; do not
+use it as a verified template or final-apply candidate. File health alone never
+promotes a sound to verified. Deduplicate SFX by the source preset/resource
+identity, not by repeated timeline clips or segment IDs.

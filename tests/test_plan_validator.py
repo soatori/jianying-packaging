@@ -5,12 +5,16 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 from typing import Any
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "packaging_tools" / "validators" / "plan_impl.py"
+SCRIPT_ROOT = SCRIPT.parents[2]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
 SPEC = importlib.util.spec_from_file_location("validate_packaging_plan", SCRIPT)
 if SPEC is None or SPEC.loader is None:  # pragma: no cover - environment failure
     raise RuntimeError(f"cannot load {SCRIPT}")
@@ -202,7 +206,7 @@ def valid_plan_v12() -> dict[str, Any]:
                 {"id": "main", "ref_type": "subtitle_unit", "text_ref": "U1", "offset": {"dx": 0.0, "dy": 0.0}},
                 {"id": "secondary", "ref_type": "subtitle_unit", "text_ref": "U2", "relative_to": "main", "offset": {"dx": 0.0, "dy": 0.1}, "inherit_transform_from": "main"},
             ],
-            "constraints": {"safe_zone": "project_safe_zone", "collision": "block"},
+            "constraints": {"safe_zone": {"x_min": -0.8, "x_max": 0.8, "y_min": -0.8, "y_max": 0.8}, "collision": "block"},
             "fallback": "manual_review",
         },
         "sound_selection_basis": "generic motion and spoken function",
@@ -448,6 +452,15 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         }
         self.assert_error_contains(plan, "not listed in preset")
 
+    def test_direct_override_requires_verified_adapter_mapping(self) -> None:
+        plan = valid_plan()
+        plan["presets"][0]["allowed_overrides"].append("rotation")
+        plan["groups"][0]["visual"][0]["overrides"]["rotation"] = {
+            "mode": "absolute",
+            "value": 10,
+        }
+        self.assert_error_contains(plan, "no verified adapter mapping")
+
     def test_copy_is_not_mutated_by_validation(self) -> None:
         plan = valid_plan()
         before = copy.deepcopy(plan)
@@ -593,6 +606,31 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         plan["groups"][0]["layout"]["template_id"] = "missing-template"
         self.assert_error_contains(plan, "not found in layout registry")
 
+    def test_final_layout_accepts_numeric_safe_zone_bounds(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["layout"]["constraints"]["safe_zone"] = {
+            "x_min": -0.8, "x_max": 0.8, "y_min": -0.8, "y_max": 0.8,
+        }
+        errors, _ = validate_for_test(plan)
+        self.assertFalse(any("safe_zone" in error for error in errors), errors)
+
+    def test_final_layout_rejects_symbolic_safe_zone_for_apply(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["layout"]["constraints"]["safe_zone"] = "project_safe_zone"
+        plan["execution"]["mode"] = "apply"
+        self.assert_error_contains(plan, "numeric safe-zone bounds")
+
+    def test_final_review_plan_keeps_symbolic_safe_zone_reviewable(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["layout"]["constraints"]["safe_zone"] = "project_safe_zone"
+        errors, _ = validate_for_test(plan)
+        self.assertFalse(any("safe_zone" in error for error in errors), errors)
+
+    def test_final_layout_rejects_safe_zone_outside_normalized_canvas(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["layout"]["constraints"]["safe_zone"]["x_max"] = 1.1
+        self.assert_error_contains(plan, "inside normalized canvas coordinates")
+
     def test_text_span_target_range_must_match_text_range(self) -> None:
         plan = valid_plan_v12()
         plan["groups"][0]["audio"]["target_range"]["duration_us"] = 1000
@@ -675,6 +713,128 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         plan["comparison"]["remap_status"] = "pending"
         self.assert_error_contains(plan, "remap_status")
 
+    def test_schema_12_stable_plan_remains_reviewable(self) -> None:
+        plan = valid_plan_v12()
+        plan["source"]["content_pass"] = "stable"
+        plan["source"]["subtitle_alignment"]["status"] = "stable"
+        plan["execution"].update(mode="review", phase="staging")
+        plan["groups"][0]["visual"][0].update(
+            operation="copy_from_subtitle",
+            source_locator={"timeline": "manual", "segment_id": "subtitle-segment"},
+        )
+        plan["groups"][0]["audio"] = {"action": "none"}
+        errors, warnings = VALIDATOR.validate_plan(plan)
+        self.assertEqual(errors, [], warnings)
+
+    def test_schema_12_copy_from_subtitle_requires_complete_text_binding(self) -> None:
+        for field in ("text", "text_ref", "text_hash"):
+            with self.subTest(field=field):
+                plan = valid_plan_v12()
+                visual = plan["groups"][0]["visual"][0]
+                visual.update(
+                    operation="copy_from_subtitle",
+                    source_locator={"timeline": "manual", "segment_id": "subtitle-segment"},
+                )
+                plan["groups"][0]["audio"] = {"action": "none"}
+                visual.pop(field, None)
+                errors, _warnings = VALIDATOR.validate_plan(plan)
+                self.assertTrue(any(field in error for error in errors), errors)
+
+    def test_schema_12_copy_from_auxiliary_text_requires_text_hash(self) -> None:
+        plan = valid_plan_v12()
+        group = plan["groups"][0]
+        group["auxiliary_text_refs"] = ["mark-1"]
+        visual = group["visual"][0]
+        visual.update(
+            operation="copy_from_subtitle",
+            source_locator={"timeline": "manual", "segment_id": "subtitle-segment"},
+            text="Synthetic Q",
+            text_ref="mark-1",
+        )
+        visual.pop("text_hash", None)
+        group["audio"] = {"action": "none"}
+
+        errors, _warnings = VALIDATOR.validate_plan(plan)
+
+        self.assertTrue(any("text_hash" in error for error in errors), errors)
+
+    def test_clone_template_with_multiple_segments_requires_selected_segment(self) -> None:
+        plan = valid_plan_v12()
+        plan["presets"][0]["template_source"]["segment_ids"] = ["segment-a", "segment-b"]
+        self.assert_error_contains(plan, "template_segment_id is required when the preset has multiple source segments")
+
+    def test_clone_template_selected_segment_must_belong_to_preset_source(self) -> None:
+        plan = valid_plan_v12()
+        plan["presets"][0]["template_source"]["segment_ids"] = ["segment-a", "segment-b"]
+        plan["groups"][0]["visual"][0]["template_segment_id"] = "segment-c"
+        self.assert_error_contains(plan, "template_segment_id must be listed in preset.template_source.segment_ids")
+
+    def test_clone_template_valid_segment_selection_is_accepted(self) -> None:
+        plan = valid_plan_v12()
+        plan["presets"][0]["template_source"]["segment_ids"] = ["segment-a", "segment-b"]
+        plan["groups"][0]["visual"][0]["template_segment_id"] = "segment-b"
+        errors, warnings = VALIDATOR.validate_plan(
+            plan,
+            sound_catalog=synthetic_sound_catalog(),
+            sound_pools=synthetic_sound_pools(),
+        )
+        self.assertEqual(errors, [], warnings)
+
+    def test_schema_12_staging_apply_requires_approved_content(self) -> None:
+        plan = valid_plan_v12()
+        plan["source"]["content_pass"] = "stable"
+        plan["execution"].update(mode="apply", phase="staging")
+        plan["groups"][0]["status"] = "approved"
+        plan["groups"][0]["visual"][0].update(
+            operation="copy_from_subtitle",
+            source_locator={"timeline": "manual", "segment_id": "subtitle-segment"},
+        )
+        plan["groups"][0]["audio"] = {"action": "none"}
+
+        self.assert_error_contains(plan, "execution.mode=apply requires source.content_pass=approved")
+
+    def test_schema_12_staging_apply_requires_approved_subtitle_alignment(self) -> None:
+        plan = valid_plan_v12()
+        plan["source"]["subtitle_alignment"]["status"] = "stable"
+        plan["execution"].update(mode="apply", phase="staging")
+        plan["groups"][0]["status"] = "approved"
+        plan["groups"][0]["visual"][0].update(
+            operation="copy_from_subtitle",
+            source_locator={"timeline": "manual", "segment_id": "subtitle-segment"},
+        )
+        plan["groups"][0]["audio"] = {"action": "none"}
+
+        self.assert_error_contains(plan, "execution.mode=apply requires source.subtitle_alignment.status=approved")
+
+    def test_schema_12_approved_staging_apply_passes(self) -> None:
+        plan = valid_plan_v12()
+        plan["execution"].update(mode="apply", phase="staging")
+        plan["groups"][0]["status"] = "approved"
+        plan["groups"][0]["visual"][0].update(
+            operation="copy_from_subtitle",
+            source_locator={"timeline": "manual", "segment_id": "subtitle-segment"},
+        )
+        plan["groups"][0]["audio"] = {"action": "none"}
+
+        errors, warnings = VALIDATOR.validate_plan(plan)
+        self.assertEqual(errors, [], warnings)
+
+    def test_schema_12_final_apply_requires_approved_staging_and_verified_remap(self) -> None:
+        plan = valid_plan_v12()
+        plan["execution"].update(mode="apply", phase="final")
+        plan["groups"][0]["status"] = "approved"
+        plan["staging"]["review_status"] = "reviewing"
+        plan["comparison"]["remap_status"] = "pending"
+
+        errors, _ = VALIDATOR.validate_plan(
+            plan,
+            sound_catalog=synthetic_sound_catalog(),
+            sound_pools=synthetic_sound_pools(),
+        )
+
+        self.assertTrue(any("staging.review_status=approved" in error for error in errors), errors)
+        self.assertTrue(any("remap_status" in error for error in errors), errors)
+
     def test_schema_12_groups_require_order_fingerprints(self) -> None:
         plan = valid_plan_v12()
         del plan["groups"][0]["source_order_hash"]
@@ -712,6 +872,68 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         audio["trim_policy"] = "motion_span"
         audio.pop("override_reason", None)
         self.assert_error_contains(plan, "override_reason")
+
+    def test_visual_animation_duration_cannot_exceed_row_window(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["visual"][0]["animation"] = {
+            "resource_id": "resource-1",
+            "duration_us": 5_001,
+        }
+
+        self.assert_error_contains(plan, "animation.duration_us exceeds the text row visible window")
+
+    def test_visual_animation_duration_accepts_microseconds_within_row_window(self) -> None:
+        plan = valid_plan_v12()
+        plan["groups"][0]["range"]["duration_us"] = 2_000_000
+        plan["groups"][0]["visual"][0]["animation"] = {
+            "resource_id": "resource-1",
+            "duration_us": 1_840_000,
+        }
+        errors, warnings = VALIDATOR.validate_plan(
+            plan,
+            sound_catalog=synthetic_sound_catalog(),
+            sound_pools=synthetic_sound_pools(),
+        )
+        self.assertEqual(errors, [], warnings)
+
+    def test_global_alpha_override_is_bounded_and_absolute(self) -> None:
+        plan = valid_plan_v12()
+        plan["presets"][0]["allowed_overrides"].append("global_alpha")
+        visual = plan["groups"][0]["visual"][0]
+        visual["overrides"]["global_alpha"] = {"mode": "absolute", "value": 1.1}
+
+        self.assert_error_contains(plan, "global_alpha.value must be between 0 and 1")
+
+        visual["overrides"]["global_alpha"] = {"mode": "relative", "delta": 0.2}
+        self.assert_error_contains(plan, "global_alpha requires an absolute value")
+
+    def test_direct_scale_and_timerange_overrides_have_safe_absolute_bounds(self) -> None:
+        plan = valid_plan_v12()
+        plan["presets"][0]["allowed_overrides"].extend(["scale_x", "start_us", "duration_us"])
+        visual = plan["groups"][0]["visual"][0]
+        visual["overrides"]["scale_x"] = {"mode": "absolute", "value": 0}
+        self.assert_error_contains(plan, "scale_x: absolute value must be positive")
+
+        visual["overrides"]["scale_x"] = {"mode": "absolute", "value": 1}
+        visual["overrides"]["start_us"] = {"mode": "absolute", "value": -1}
+        self.assert_error_contains(plan, "start_us: absolute value must be non-negative")
+
+        visual["overrides"]["start_us"] = {"mode": "absolute", "value": 0}
+        visual["overrides"]["duration_us"] = {"mode": "absolute", "value": 0}
+        self.assert_error_contains(plan, "duration_us: absolute value must be positive")
+
+    def test_direct_numeric_and_boolean_overrides_reject_invalid_absolute_values(self) -> None:
+        plan = valid_plan_v12()
+        visual = plan["groups"][0]["visual"][0]
+        visual["overrides"]["position_y"] = {"mode": "absolute", "value": "not-a-number"}
+        self.assert_error_contains(plan, "position_y: absolute value must be a finite number")
+
+        visual["overrides"]["position_y"] = {"mode": "absolute", "value": float("inf")}
+        self.assert_error_contains(plan, "position_y: absolute value must be a finite number")
+
+        plan["presets"][0]["allowed_overrides"].append("visible")
+        visual["overrides"]["visible"] = {"mode": "relative", "delta": 1}
+        self.assert_error_contains(plan, "visible requires an absolute boolean value")
 
 
 if __name__ == "__main__":
