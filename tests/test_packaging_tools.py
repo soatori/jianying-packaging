@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -457,6 +458,59 @@ class PackagingToolTests(unittest.TestCase):
         self.assertEqual(packaging_main(["validate", "layout", "not-a-json-file.json"]), 2)
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(packaging_main(["validate", "layout", str(registry), "--out", directory]), 2)
+
+    def test_cli_rejects_report_output_over_input(self):
+        original_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "registry.json"
+            original = b'{"templates":[]}\n'
+            input_path.write_bytes(original)
+            report = {
+                "report_type": "packaging_layout_validation",
+                "status": "ok",
+                "ok": True,
+                "data": {},
+                "errors": [],
+                "input_errors": [],
+                "warnings": [],
+                "summary": {},
+            }
+            try:
+                os.chdir(directory)
+                with contextlib.redirect_stdout(io.StringIO()), patch("packaging_tool._run", return_value=report) as run:
+                    code = packaging_main(["validate", "layout", "registry.json", "--out", ".\\registry.json"])
+            finally:
+                os.chdir(original_cwd)
+
+            self.assertEqual(code, 2)
+            self.assertEqual(input_path.read_bytes(), original)
+            run.assert_not_called()
+
+    def test_cli_rejects_report_output_inside_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft"
+            project_index = draft / "Timelines" / "project.json"
+            project_index.parent.mkdir(parents=True)
+            original = b'{"timelines":[]}\n'
+            project_index.write_bytes(original)
+            report = {
+                "report_type": "packaging_preflight",
+                "status": "ok",
+                "ok": True,
+                "data": {},
+                "errors": [],
+                "input_errors": [],
+                "warnings": [],
+                "summary": {},
+            }
+            with contextlib.redirect_stdout(io.StringIO()), patch("packaging_tool._run", return_value=report) as run:
+                code = packaging_main([
+                    "preflight", "--draft", str(draft), "--timeline", "manual", "--out", str(project_index),
+                ])
+
+            self.assertEqual(code, 2)
+            self.assertEqual(project_index.read_bytes(), original)
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

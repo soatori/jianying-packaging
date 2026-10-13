@@ -261,6 +261,35 @@ def _normalize_output_options(argv: list[str] | None) -> list[str] | None:
     return leading + remaining
 
 
+def _validated_output_path(args: argparse.Namespace) -> Path | None:
+    value = getattr(args, "out", None)
+    if not value:
+        return None
+    output = Path(value).expanduser().resolve()
+    draft = getattr(args, "draft", None)
+    if draft:
+        try:
+            output.relative_to(Path(draft).expanduser().resolve())
+        except ValueError:
+            pass
+        else:
+            raise ValueError("--out must be outside the draft directory")
+    for field in (
+        "path", "paths", "plan", "catalog", "pools", "animation_capabilities",
+        "existing_audio", "observation", "current", "reference", "before", "after",
+        "prototype", "replacement", "registry", "entries",
+    ):
+        inputs = getattr(args, field, None)
+        inputs = inputs if isinstance(inputs, (list, tuple)) else [inputs]
+        for item in inputs:
+            if not isinstance(item, (str, os.PathLike)) or not item:
+                continue
+            source = Path(item).expanduser()
+            if output == source.resolve() or (source.exists() and output.exists() and output.samefile(source)):
+                raise ValueError(f"--out must not overwrite an input file: {source}")
+    return output
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(description=__doc__)
     parser.add_argument("--format", choices=("json", "text"), default="json")
@@ -340,9 +369,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
+    output_path: Path | None = None
     try:
         raw_argv = sys.argv[1:] if argv is None else argv
         args = parser.parse_args(_normalize_output_options(raw_argv))
+        output_path = _validated_output_path(args)
         report = _run(args)
     except BlockedReportError as exc:
         report = result("packaging_cli", errors=[f"blocked input report: {exc}"], status="blocked")
@@ -353,7 +384,6 @@ def main(argv: list[str] | None = None) -> int:
     else:
         code = exit_code(report)
     output_format = getattr(locals().get("args"), "format", "json")
-    output_path = getattr(locals().get("args"), "out", None)
     if output_path:
         try:
             write_json(output_path, report)
