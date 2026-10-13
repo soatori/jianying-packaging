@@ -7,6 +7,14 @@ from typing import Any
 from .result import result
 
 
+_DIALOGUE_ROLES = {"dialogue", "voice", "speech", "spoken"}
+_DIALOGUE_COLLECTIONS = {"dialogue", "dialogue_intervals", "voice_intervals", "speech_intervals"}
+
+
+def _is_dialogue(item: dict[str, Any]) -> bool:
+    return any(str(item.get(field, "")).lower() in _DIALOGUE_ROLES for field in ("kind", "type", "track_type", "role"))
+
+
 def _interval(item: dict[str, Any]) -> tuple[int, int] | None:
     start = item.get("start_us", item.get("target_start_us"))
     end = item.get("end_us", item.get("target_end_us"))
@@ -23,7 +31,7 @@ def _audio_evidence(value: Any) -> tuple[list[dict[str, Any]], bool]:
         return [], False
     if isinstance(value, list):
         rows = [item for item in value if isinstance(item, dict)]
-        dialogue = any(str(item.get("kind", item.get("type", item.get("track_type", item.get("role", ""))))).lower() in {"dialogue", "voice", "speech", "spoken"} for item in rows)
+        dialogue = any(_is_dialogue(item) for item in rows)
         return rows, dialogue
     if not isinstance(value, dict):
         return [], False
@@ -34,15 +42,15 @@ def _audio_evidence(value: Any) -> tuple[list[dict[str, Any]], bool]:
             continue
         raw = value.get(key)
         if isinstance(raw, list):
-            if key in {"dialogue", "dialogue_intervals", "voice_intervals", "speech_intervals"}:
+            if key in _DIALOGUE_COLLECTIONS:
                 dialogue_evidence = True
             for item in raw:
                 if isinstance(item, dict):
                     row = dict(item)
-                    if key in {"dialogue", "dialogue_intervals", "voice_intervals", "speech_intervals"}:
-                        row.setdefault("kind", "dialogue")
+                    if key in _DIALOGUE_COLLECTIONS:
+                        row["kind"] = "dialogue"
                         dialogue_evidence = True
-                    elif str(row.get("kind", row.get("type", row.get("track_type", row.get("role", ""))))).lower() in {"dialogue", "voice", "speech", "spoken"}:
+                    elif _is_dialogue(row):
                         dialogue_evidence = True
                     rows.append(row)
     return rows, dialogue_evidence
@@ -199,8 +207,7 @@ def check_sound_operations(plan: Any, catalog: Any, pools: Any, existing_audio: 
     intervals = []
     for item in audio_rows:
         span = _interval(item)
-        kind = str(item.get("kind", item.get("type", item.get("track_type", item.get("role", ""))))).lower()
-        if kind in {"dialogue", "voice", "speech", "spoken"} and span is None:
+        if _is_dialogue(item) and span is None:
             report_gate(f"dialogue interval evidence is invalid ({item.get('id', 'unknown')})", final_only=True)
         if span:
             intervals.append((item, span))
@@ -220,8 +227,7 @@ def check_sound_operations(plan: Any, catalog: Any, pools: Any, existing_audio: 
             continue
         start, end = sound_span
         for item, span in intervals:
-            kind = str(item.get("kind", item.get("type", item.get("track_type", item.get("role", ""))))).lower()
-            if kind in {"dialogue", "voice", "speech", "spoken"}:
+            if _is_dialogue(item):
                 dialogue_evidence_present = True
                 if span[0] < end and start < span[1]:
                     report_gate(f"group {group.get('id')}: sound overlaps dialogue interval ({item.get('id')})", final_only=True)

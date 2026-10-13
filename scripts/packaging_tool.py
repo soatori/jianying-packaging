@@ -285,7 +285,12 @@ def _validated_output_path(args: argparse.Namespace) -> Path | None:
             if not isinstance(item, (str, os.PathLike)) or not item:
                 continue
             source = Path(item).expanduser()
-            if output == source.resolve() or (source.exists() and output.exists() and output.samefile(source)):
+            resolved_source = source.resolve()
+            if (
+                output == resolved_source
+                or (source.is_dir() and output.is_relative_to(resolved_source))
+                or (source.exists() and output.exists() and output.samefile(source))
+            ):
                 raise ValueError(f"--out must not overwrite an input file: {source}")
     return output
 

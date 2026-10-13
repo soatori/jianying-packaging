@@ -424,6 +424,12 @@ class PackagingToolTests(unittest.TestCase):
         invalid_evidence = [
             [{"id": "voice", "kind": "dialogue"}],
             [{"id": "voice", "kind": "dialogue", "start_us": 100, "end_us": 100}],
+            [{"id": "voice", "kind": "audio", "role": "dialogue"}],
+            [
+                {"id": "voice", "kind": "dialogue", "start_us": 0, "end_us": 50},
+                {"id": "broken", "type": "audio", "role": "dialogue"},
+            ],
+            {"dialogue_intervals": [{"id": "voice", "kind": "audio", "role": "dialogue"}]},
         ]
 
         valid = check_sound_operations(plan, catalog, pools, [{"id": "voice", "kind": "dialogue", "start_us": 0, "end_us": 50}])
@@ -439,6 +445,8 @@ class PackagingToolTests(unittest.TestCase):
         invalid_evidence = [
             [{"id": "voice", "kind": "dialogue"}],
             [{"id": "voice", "kind": "dialogue", "start_us": 100, "end_us": 100}],
+            [{"id": "voice", "kind": "audio", "role": "dialogue"}],
+            {"dialogue_intervals": [{"id": "voice", "kind": "audio", "role": "dialogue"}]},
         ]
 
         for evidence in invalid_evidence:
@@ -539,6 +547,30 @@ class PackagingToolTests(unittest.TestCase):
 
             self.assertEqual(code, 2)
             self.assertEqual(project_index.read_bytes(), original)
+            run.assert_not_called()
+
+    def test_cli_rejects_report_output_inside_generic_input_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scan_root = Path(directory) / "skill"
+            scan_root.mkdir()
+            input_path = scan_root / "SKILL.md"
+            original = b"generic content to scan\n"
+            input_path.write_bytes(original)
+            report = {
+                "report_type": "packaging_generic_content_validation",
+                "status": "ok",
+                "ok": True,
+                "data": {},
+                "errors": [],
+                "input_errors": [],
+                "warnings": [],
+                "summary": {},
+            }
+            with contextlib.redirect_stdout(io.StringIO()), patch("packaging_tool._run", return_value=report) as run:
+                code = packaging_main(["validate", "generic", str(scan_root), "--out", str(input_path)])
+
+            self.assertEqual(code, 2)
+            self.assertEqual(input_path.read_bytes(), original)
             run.assert_not_called()
 
 
