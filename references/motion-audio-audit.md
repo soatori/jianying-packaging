@@ -79,11 +79,12 @@ audit result.
 
 Build candidate pools from the current readable primary timeline and only the
 reference drafts explicitly supplied for the current case. Never enumerate all
-saved drafts or scan a whole drive to discover sound assets. If no authorized
-reference paths or current-case catalog/pools are available, leave sound
-selection unresolved and request those inputs. Keep source-specific names, IDs,
-paths, and timecodes in the external case catalog and pools. Record evidence
-separately; one check does not stand in for another.
+saved drafts or scan a whole drive to discover sound assets. If the current-case
+catalog or pools are missing, leave sound selection unresolved and request
+them. If catalog discovery needs reference drafts, request explicit current-case
+paths and scan only those. Keep source-specific names, IDs, paths, and timecodes
+in the external case catalog and pools. Record evidence separately; one check
+does not stand in for another.
 
 | Evidence | Establishes | Does not establish |
 |---|---|---|
