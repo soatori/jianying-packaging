@@ -22,11 +22,11 @@ use these relationships:
 These reports are evidence for review. They do not select assets or write a
 Jianying draft.
 
-The schema 1.2 `apply` adapter also checks dialogue collisions before a sound
+The schema 2.0 `prepare` phase also checks dialogue collisions before a sound
 write. It derives intervals only from recognized current-draft audio roles; if
 those roles do not identify dialogue, supply explicit intervals through
-`packaging_tool.py apply --existing-audio <dialogue-intervals.json>`. Missing
-dialogue evidence blocks final/apply sound operations.
+`packaging_tool.py prepare --existing-audio <dialogue-intervals.json>`. Missing
+dialogue evidence blocks final sound operations before commit.
 
 
 ## Event-level animation-to-SFX coverage

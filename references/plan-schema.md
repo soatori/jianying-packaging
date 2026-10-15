@@ -1,33 +1,34 @@
 # Packaging plan schema
 
-Validate a plan before presenting or executing it. Apply it only through the schema 1.2 packaging adapter:
+Validate a schema 2.0 plan, then prepare and commit it through the packaging adapter:
 
 ```powershell
 python scripts/packaging_tool.py validate plan <plan.json>
-python scripts/packaging_tool.py apply --draft <draft> --timeline <source> --plan <plan.json>
+python scripts/packaging_tool.py prepare --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/prepared.json
+python scripts/packaging_tool.py commit --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/prepared.json --approved-prepared-hash <approved-hash>
 ```
 
-The plan is a semantic and execution contract. It may contain exact runtime locators supplied by the user, but this reference and its examples must remain generic. The packaging adapter owns schema 1.2 plan translation; encryption, replica discovery, backup, low-level transaction writes, and read-back use the existing `jianying-editor` API. Its `apply-plan` command remains limited to `keep_blocks`.
+`prepare` validates the plan, current replicas, source timeline, sound and animation evidence, candidate content, and any required HTML preview in one process. It writes only the prepared artifact under the skill's `temp/` and reports its `prepared_artifact_hash`. `commit` requires that exact hash separately as `--approved-prepared-hash`; obtain it from the prepare report the user reviewed, and do not reread it from the artifact after review. It rechecks the prepared artifact, plan, source selector, and source snapshot, then uses the existing `jianying-editor` transaction API for clone, backup, write, read-back, replica validation, and rollback. It does not repeat plan validation, sound checking, animation inventory, transformation, or preview generation. The separate `verify` command remains an explicit audit.
+
+The plan is a semantic and execution contract. It may contain exact runtime locators supplied by the user, but this reference and its examples must remain generic. Encryption, replica discovery, backup, low-level transaction writes, and read-back remain in the existing `jianying-editor` API. Its `apply-plan` command remains limited to `keep_blocks`.
 
 ## Schema versions
 
-- New plans use `schema_version: "1.2"`.
-- Version `1.1` remains readable for review and migration only.
-- Version `1.0` remains readable as legacy input and is never directly applied.
-- Do not migrate by changing only `schema_version`: final 1.2 layouts need registered `template_id`/version data and numeric safe-zone bounds. A review-only validation does not run apply migration guards; only the actual apply path enforces write eligibility.
-- A `1.2` final plan requires an approved final-subtitle reference, verified order mapping, relative layout or explicitly reviewed legacy layout, sound selection evidence, clone/source-preservation settings, and a required pre-write backup.
-- A `1.2` final plan also requires `staging.review_status: "approved"`; a final plan with pending or reviewing staging is blocked.
+- New plans use `schema_version: "2.0"`.
+- Schema 1.2, 1.1, and 1.0 plans return an explicit version error; there is no automatic migration.
+- A final plan requires an approved final-subtitle reference, verified order mapping, relative layout or explicitly reviewed legacy layout, sound selection evidence, clone/source-preservation settings, and a required pre-write backup.
+- A final plan also requires `staging.review_status: "approved"`; a final plan with pending or reviewing staging is blocked.
 
 Execution phases:
 
 - `staging`: copy subtitle candidates to an upper review layer; preserve source subtitles; do not add final templates or sound effects.
-- `final`: apply the approved visual/audio package after staging, subtitle alignment, and remapping are approved.
+- `final`: commit the approved visual/audio package after staging, subtitle alignment, and remapping are approved.
 
-## Required 1.2 contract
+## Required 2.0 contract
 
 ```json
 {
-  "schema_version": "1.2",
+  "schema_version": "2.0",
   "source": {
     "draft_path": "<runtime draft path>",
     "timeline": "<runtime source timeline>",
@@ -78,15 +79,15 @@ Execution phases:
 }
 ```
 
-`source.content_pass` may be `stable` or `approved`, and `source.subtitle_alignment.status` may be `stable` or `approved` for a review-only plan. `stable` is not user approval. For every schema 1.2 write plan (`execution.mode: apply`), the validator requires both statuses to be `approved` for staging and final phases. Final also requires `staging.review_status: approved`, an approved final-subtitle reference, and `comparison.remap_status` of `not_required` or `verified`. `pending` and `blocked` stop final execution. Validator success does not grant conversational write authorization. The `apply` command requires a second `--apply` flag for disk writes; the Agent must still verify the user's authorization for the exact phase and target. A 1.2 execution context must include every listed stop condition.
+`source.content_pass` may be `stable` or `approved`, and `source.subtitle_alignment.status` may be `stable` or `approved` for review-only plans. `stable` is not user approval. For every schema 2.0 write plan (`execution.mode: apply`), the validator requires both statuses to be `approved` for staging and final phases. Final also requires `staging.review_status: approved`, an approved final-subtitle reference, and `comparison.remap_status` of `not_required` or `verified`. `pending` and `blocked` stop final execution. Validator success does not grant conversational write authorization. The Agent must still verify authorization for the exact phase and target before running `commit`.
 
-`source.final_subtitle_units` is the approved per-unit text-hash manifest. Its `text_hash` is the SHA-256 hash of the exact UTF-8 final subtitle text. Schema 1.2 text visuals must carry the matching `text_ref` and `text_hash`; every text `copy_from_subtitle` operation also requires `text`, and its hash must match that exact UTF-8 text even when `text_ref` names an auxiliary mark. Semantic subtitle references must additionally match the corresponding `source.final_subtitle_units` hash. A mismatch is `text_mismatch` and blocks final/apply.
+`source.final_subtitle_units` is the approved per-unit text-hash manifest. Its `text_hash` is the SHA-256 hash of the exact UTF-8 final subtitle text. Schema 2.0 text visuals must carry the matching `text_ref` and `text_hash`; every text `copy_from_subtitle` operation also requires `text`, and its hash must match that exact UTF-8 text even when `text_ref` names an auxiliary mark. Semantic subtitle references must additionally match the corresponding `source.final_subtitle_units` hash. A mismatch is `text_mismatch` and blocks preparation.
 
-The existing 1.1 contract remains required for 1.1 plans: `staging`, `duplicate_policy`, `template_health`, `sound_selection`, `visual_capability_requirements`, and `light_content_ops`.
+Prepared artifacts carry `prepared_schema_version: "2.0"`, a prepared-artifact hash, canonical draft and source selectors, source timeline ID and hash, plan hash, candidate hash and full candidate value, source duration/row/visibility/transform snapshot, changes, phase and target, preview path/hash, and sound/animation validation summaries. The artifact file must be inside the worktree's `temp/` directory. Commit requires a separately supplied approved hash from the prepare report and accepts only that exact artifact, the matching plan and candidate hashes, unchanged source snapshot, and matching preview. Modified or stale preparation returns `stale_preparation` with zero draft writes. The approved hash detects changes between review and commit; it is not a cryptographic signature if the approval input itself is changed too. All plan changes other than the two visual-preview approval fields require a fresh `prepare`.
 
 ## Canonical fields, reports and exit codes
 
-Schema 1.2 uses `group.visual` as the canonical visual-operation array. The resolver accepts `visuals` and `visual_operations` only as read-only legacy aliases; if more than one alias is present, their contents must be identical. Apply-mode transforms require the canonical `group.visual` field. Text visuals must bind `text_ref` and a SHA-256 UTF-8 `text_hash` to exactly one entry in `source.final_subtitle_units` when the reference is semantic.
+Schema 2.0 uses `group.visual` as the canonical visual-operation array. The resolver accepts `visuals` and `visual_operations` only as read-only field aliases; if more than one alias is present, their contents must be identical. Write-mode transforms require the canonical `group.visual` field. Text visuals must bind `text_ref` and a SHA-256 UTF-8 `text_hash` to exactly one entry in `source.final_subtitle_units` when the reference is semantic.
 
 All commands return the same JSON envelope by default: `report_type`, `ok`, `status`, `errors`, `input_errors`, `warnings`, `summary`, and `data`. A later command may consume that complete envelope and automatically use `data`; raw data JSON remains valid. `--format text` is a presentation-only mode. Exit code `0` means a usable report (including warnings/review), `1` means a safety/evidence/validation block, and `2` means malformed JSON, missing/unreadable input, argument, or output-path failure.
 
@@ -94,7 +95,7 @@ All commands return the same JSON envelope by default: `report_type`, `ok`, `sta
 
 ## Group contract
 
-Every group keeps the existing `id`, `status`, `range`, `context`, `category`, `level`, `motion`, and `motion_event` fields. A 1.2 group also records:
+Every group keeps the existing `id`, `status`, `range`, `context`, `category`, `level`, `motion`, and `motion_event` fields. A 2.0 group also records:
 
 ```json
 {
@@ -155,15 +156,15 @@ These fields are optional and backward compatible. They make speaker-aware selec
 - `spacing_after_us` records the gap to the next selected group and must be non-negative.
 - When `same_screen.enabled` is true, `extend_to_group_end` must be true and `overlap_policy` must be `separate_upper_tracks`.
 
-`layout` is required for final visual groups in 1.2. A slot has a unique ID, a typed subtitle/auxiliary reference, and numeric relative offsets. `relative_to` and `inherit_transform_from` may refer to any declared slot. The validator rejects unknown references and cycles. Use `legacy_absolute` only with explicit visual verification and manual-review fallback.
+`layout` is required for final visual groups in 2.0. A slot has a unique ID, a typed subtitle/auxiliary reference, and numeric relative offsets. `relative_to` and `inherit_transform_from` may refer to any declared slot. The validator rejects unknown references and cycles. Use `legacy_absolute` only with explicit visual verification and manual-review fallback.
 
-For 1.2, every slot must declare `ref_type`. `subtitle_unit` references must be listed in `semantic_unit_refs`; `auxiliary_mark` references must be listed in `auxiliary_text_refs`. Template inheritance uses parent slots first, then child slots; a same-ID child slot overrides the parent and a new child slot is appended. Inheritance cycles are invalid.
+For 2.0, every slot must declare `ref_type`. `subtitle_unit` references must be listed in `semantic_unit_refs`; `auxiliary_mark` references must be listed in `auxiliary_text_refs`. Template inheritance uses parent slots first, then child slots; a same-ID child slot overrides the parent and a new child slot is appended. Inheritance cycles are invalid.
 
-Every schema 1.2 text `copy_from_subtitle` operation must supply `text`, `text_ref`, and `text_hash`. Other text operations that supply `text` must also supply `text_ref` and `text_hash`. Subtitle-unit references must resolve through `source.final_subtitle_units`; auxiliary marks must be declared in `auxiliary_text_refs`.
+Every schema 2.0 text `copy_from_subtitle` operation must supply `text`, `text_ref`, and `text_hash`. Other text operations that supply `text` must also supply `text_ref` and `text_hash`. Subtitle-unit references must resolve through `source.final_subtitle_units`; auxiliary marks must be declared in `auxiliary_text_refs`.
 
-The template registry defines generic slot relationships; it must not contain project text, project timestamps, draft paths, or project IDs. Final/apply automatic layout requires numeric `safe_zone` bounds in normalized canvas coordinates and `project_profile.canvas_width`/`canvas_height`. Bounds use the same normalized coordinate space as relative slots. The adapter measures each current text line with the font file and size in its material, converts glyph bounds to normalized coordinates, and fits the planned operation inside the safe zone. Missing or unreliable font metrics block automated layout. A symbolic safe-zone name remains review-only; it cannot authorize a write.
+The template registry defines generic slot relationships; it must not contain project text, project timestamps, draft paths, or project IDs. Final preparation and commit automatic layout requires numeric `safe_zone` bounds in normalized canvas coordinates and `project_profile.canvas_width`/`canvas_height`. Bounds use the same normalized coordinate space as relative slots. The adapter measures each current text line with the font file and size in its material, converts glyph bounds to normalized coordinates, and fits the planned operation inside the safe zone. Missing or unreliable font metrics block automated layout. A symbolic safe-zone name remains review-only; it cannot authorize a write.
 
-Manual transforms are preserved when the plan does not include a layout change. If `layout.pattern` is `diagonal_stagger`, positions may be staggered across lines but text rotation must stay at zero. Preview and apply use the same candidate geometry; an explicit override that moves text outside the safe zone blocks. A layout operation must identify an existing unique topmost text track for auxiliary text, and the adapter blocks same-track overlap rather than creating a track.
+Manual transforms are preserved when the plan does not include a layout change. If `layout.pattern` is `diagonal_stagger`, positions may be staggered across lines but text rotation must stay at zero. Prepare computes the candidate geometry and commit reuses that prepared value; an explicit override that moves text outside the safe zone blocks. A layout operation must identify an existing unique topmost text track for auxiliary text, and the adapter blocks same-track overlap rather than creating a track.
 
 Plans with layout, animation, position, scale, rotation, or alpha changes produce a deterministic HTML geometry/timing preview and a `visual_preview_sha256`. After reviewing that exact preview, record:
 
@@ -176,9 +177,9 @@ Plans with layout, animation, position, scale, rotation, or alpha changes produc
 }
 ```
 
-`--apply` recomputes the candidate preview and blocks unless both fields match. The HTML shows measured line widths, safe zone, position, layer order, visibility, alpha, and animation duration. It is not evidence that an effect survives a native Jianying reopen; final visual and audio acceptance remains a separate human review.
+`prepare` writes the preview path and hash to the prepared artifact. After reviewing that file, record the exact status and hash above. `commit` checks the file and approval hash without regenerating the preview. The HTML shows measured line widths, safe zone, position, layer order, visibility, alpha, and animation duration. It is not evidence that an effect survives a native Jianying reopen; final visual and audio acceptance remains a separate human review.
 
-An animated visual may include `animation: {"resource_id": "<TextIntro-resource-id>", "duration_us": 1840000}`. `duration_us` is in microseconds and must equal `min(current preset duration, visible text-row duration)`; generic plan validation can check the row window, while apply checks the current preset duration too. The adapter builds a local inventory from `TextIntro` and the exact MD5 cache directory, requires same-version native capability evidence for plain-text compatibility, and writes the exact resolved cache path. Unknown/ambiguous paths, resource types, versions, or required text inputs block. A shader file is not a cross-version compatibility guarantee. The recorded duration is checked against the plan, operation report, and candidate animation material.
+An animated visual may include `animation: {"resource_id": "<TextIntro-resource-id>", "duration_us": 1840000}`. `duration_us` is in microseconds and must equal `min(current preset duration, visible text-row duration)`; generic plan validation can check the row window, while prepare checks the current preset duration too. The adapter builds a local inventory from `TextIntro` and the exact MD5 cache directory, requires same-version native capability evidence for plain-text compatibility, and writes the exact resolved cache path. Unknown/ambiguous paths, resource types, versions, or required text inputs block. A shader file is not a cross-version compatibility guarantee. The recorded duration is checked against the plan, operation report, and candidate animation material.
 
 Transparency maps to `segment.global_alpha` only when that field exists on the current segment prototype, with a value from 0 through 1. Hiding continues to use `segment.visible`; alpha zero is not a replacement for hiding.
 
@@ -193,11 +194,11 @@ A plan that carries dialogue or same-screen metadata should also carry a review 
 - manual transform comparisons;
 - backup path and replica-validation result.
 
-A missing or stale review report blocks final/apply even when the structural plan validates. If the plan changes its layout/animation or its current source changes, regenerate and reapprove the preview hash.
+A missing or stale review report blocks commit even when the structural plan validates. If the plan changes its layout/animation or the current source changes, run prepare again and reapprove the new preview hash.
 
 ## Replica audit
 
-Read-only source preflight and apply dry-run classify replica mismatches using the current `ReplicaManifest` roles. Drift in an associated `writable-backup` is a warning; primary and associated `writable-template` drift block. Missing, unreadable, or unassociated candidates also block. After a transaction write, replica validation remains strict and every required target copy must match.
+Prepare and commit classify source replica mismatches using the current `ReplicaManifest` roles. Drift in an associated `writable-backup` is a warning; primary and associated `writable-template` drift block. Missing, unreadable, or unassociated candidates also block. After a transaction write, replica validation remains strict and every required target copy must match.
 
 ## Visual and audio operations
 
@@ -212,7 +213,7 @@ separate adapter path; a supported layout rotation must not be encoded as a
 direct visual override.
 Absolute scale overrides must be positive; absolute `start_us` values must be
 non-negative and absolute `duration_us` values must be positive. Relative
-values are checked again after applying them to the current draft prototype.
+values are checked during prepare against the current draft prototype.
 
 The adapter copies a template segment and its complete material closure from
 the current draft. A preset with one source segment needs no extra selector; if
@@ -231,7 +232,7 @@ saved fade values still require listening review in Jianying.
 
 The adapter does not synthesize motion from a family label. A final group with
 `motion` other than `none` must resolve to a copied segment whose referenced
-closure contains a non-empty animation/keyframe payload; otherwise apply is
+closure contains a non-empty animation/keyframe payload; otherwise preparation is
 blocked. A declared `motion: none` also blocks when the selected prototype
 contains motion. Matching the payload to the intended animation family and
 checking timing/readability still require reopened Jianying review.
@@ -255,13 +256,13 @@ For a non-`none` audio action, require:
 
 `single_hit` and `decay` default to `text_span`; `multi_hit` and typing-like sounds default to `motion_span`. A known leading silence must be skipped or explicitly preserved with a reason. Do not stretch or loop unless the catalog permits it. A group has at most one primary sound.
 
-`text_span` requires `text_range`; `motion_span` requires a valid group motion event. A final apply plan must select a verified candidate from a pool containing at least three unique candidates. The pool is a choice set, not simultaneous playback.
+`text_span` requires `text_range`; `motion_span` requires a valid group motion event. A final plan must select a verified candidate from a pool containing at least three unique candidates. The pool is a choice set, not simultaneous playback.
 
-`text_span` also requires `target_range == text_range`; `motion_span` requires `target_range == motion_event.start_us..end_us`. Known leading silence requires an explicit `source_range`; `skip` must start after the silence, while `preserve` requires an override reason. Final/apply plans must resolve the candidate pool and selected preset from a verified sound catalog.
+`text_span` also requires `target_range == text_range`; `motion_span` requires `target_range == motion_event.start_us..end_us`. Known leading silence requires an explicit `source_range`; `skip` must start after the silence, while `preserve` requires an override reason. Final plans must resolve the candidate pool and selected preset from a verified sound catalog.
 
 Sound catalogs and motion pools are case inputs. The skill package contains no ready-to-use project assets, and the validator does not load a hidden default catalog. For plans with sound, pass the current verified files explicitly: `python scripts/packaging_tool.py validate plan <plan.json> --catalog <case-catalog.json> --pools <case-pools.json>`. Missing inputs keep sound selection unresolved; do not substitute assets from another project.
 
-Final/apply sound checks also require explicit dialogue interval evidence so
+Prepare sound checks also require explicit dialogue interval evidence so
 the adapter can block SFX/dialogue collisions. The adapter derives intervals
 when the current draft's audio material or track metadata identifies dialogue;
 when those roles are unknown, provide `--existing-audio` as a JSON list with
@@ -271,9 +272,9 @@ count as evidence that dialogue is absent.
 ## Safety gates
 
 - `execution.mode` is `review` or `apply`.
-- Apply requires `target.clone_source=true`, `execution.clone_source=true`, `preserve_source=true`, `preserve_manual_edits=true`, and `pre_write_backup=required`, unless the user has explicitly authorized a documented safety exception.
-- Staging apply requires approved content and subtitle alignment, plus authorization for the staging write.
-- Final apply requires approved content, subtitle alignment, and staging; it also requires authorization for final application.
+- Commit requires `target.clone_source=true`, `execution.clone_source=true`, `preserve_source=true`, `preserve_manual_edits=true`, and `pre_write_backup=required`, unless the user has explicitly authorized a documented safety exception.
+- Staging commit requires approved content and subtitle alignment, plus authorization for the staging write.
+- Final commit requires approved content, subtitle alignment, and staging; it also requires authorization for final application.
 - Final requires approved final-subtitle reference and verified/not-required remapping.
 - Final requires the complete execution context contract; the packaging adapter consumes it as an execution gate.
 - Staging may use subtitle-copy/display-review operations only; it must not add final templates or sound.

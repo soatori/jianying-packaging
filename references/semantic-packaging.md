@@ -117,7 +117,7 @@ Count reuse across the whole plan before review, not only inside the per-preset 
 
 Leading silence of JianYing cache SFX must be measured, never trusted from the reference draft's source range (the reference may already skip it): run `ffmpeg -i <cache-file> -af silencedetect=noise=-35dB:d=0.03 -f null -` (retry `-45dB` when nothing is found); when the first `silence_start` is below 10ms, record `silence_end` as `leading_silence_us` in the catalog and apply the `skip` policy. Observed cache presets commonly carry 30–400ms of leading silence; unmeasured presets land audibly late against the animation even though the target range looks correct.
 
-Inline candidate lists are review evidence only. Final/apply plans must resolve `candidate_pool_ref`, `selected_preset_id`, and `catalog_ref` from the formal sound pool/catalog and the catalog record must be verified. If the pool is incomplete, keep the plan in review and emit `candidate_pool_incomplete`.
+Inline candidate lists are review evidence only. Final plans must resolve `candidate_pool_ref`, `selected_preset_id`, and `catalog_ref` from the formal sound pool/catalog and the catalog record must be verified. If the pool is incomplete, keep the plan in review and emit `candidate_pool_incomplete`.
 
 Sound-form defaults are:
 
@@ -125,7 +125,7 @@ Sound-form defaults are:
 - `multi_hit` and typing/continuous-click sounds → motion-span trim;
 - known leading silence → skip unless `preserve` is explicitly justified;
 - `text_span` target range must equal the text range; `motion_span` target range must equal the parsed motion event;
-- Review-mode dialogue overlap is a warning, but final/apply dialogue overlap or missing dialogue interval evidence is a safety block. A selected preset must be present in the formal candidate pool and catalog; final/apply additionally require verified pool/candidate/catalog records and a legal leading-silence source range.
+- Review-mode dialogue overlap is a warning, but final-plan dialogue overlap or missing dialogue interval evidence is a safety block. A selected preset must be present in the formal candidate pool and catalog; final plans additionally require verified pool/candidate/catalog records and a legal leading-silence source range.
 - a known leading silence requires an explicit source range so the editor context cannot silently start at source zero;
 - unknown form or incomplete duration data → human review.
 

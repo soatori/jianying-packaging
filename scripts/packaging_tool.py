@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Packaging analysis and schema 1.2 draft apply CLI.
+"""Packaging analysis and schema 2.0 prepare/commit CLI.
 
-Analysis and validation commands are read-only. The apply command translates a
-validated schema 1.2 plan and uses jianying-editor's existing transaction API.
+Analysis and preparation are read-only with respect to drafts. Commit uses the
+existing jianying-editor transaction API on a prepared candidate.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,13 +17,16 @@ from typing import Any
 from packaging_tools.io import BlockedReportError, dump_json, load_json, text_result, unwrap_report, write_json
 from packaging_tools.inventory import inventory_templates_and_materials
 from packaging_tools.audio_inventory import classify_audio_events
-from packaging_tools.draft_apply import apply_packaging_plan
+from packaging_tools.draft_apply import (
+    commit_prepared_packaging,
+    prepare_packaging_plan,
+    resolve_prepared_path,
+)
 from packaging_tools.layer_discovery import discover_packaging_layers
 from packaging_tools.learning import build_learning_report, validate_learning_report
 from packaging_tools.motion_check import check_motion_reuse
 from packaging_tools.layout_resolver import resolve_relative_layout
 from packaging_tools.reference_diff import diff_manual_reference
-from packaging_tools.replica_audit import classify_replica_errors
 from packaging_tools.result import exit_code, result
 from packaging_tools.snapshot import build_packaging_snapshot
 from packaging_tools.sound_check import check_sound_operations
@@ -46,93 +48,6 @@ def _editor_root(value: str | None) -> Path:
     if env:
         return Path(env)
     return Path(__file__).resolve().parents[2] / "jianying-editor-skill"
-
-
-def _parse_editor_json(stdout: str) -> Any:
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError:
-        start = stdout.find("{")
-        end = stdout.rfind("}")
-        if start >= 0 and end > start:
-            return json.loads(stdout[start : end + 1])
-        raise
-
-
-def _run_editor_readonly(root: Path, command: list[str]) -> dict[str, Any]:
-    script = root / "scripts" / "jianying_project.py"
-    if not script.exists():
-        raise FileNotFoundError(f"jianying-editor CLI not found: {script}")
-    completed = subprocess.run(
-        [sys.executable, str(script), *command],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    try:
-        parsed = _parse_editor_json(completed.stdout)
-    except json.JSONDecodeError:
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"editor read-only command failed ({completed.returncode}): "
-                f"{completed.stderr.strip() or completed.stdout.strip()}"
-            ) from None
-        raise
-    return {"command": command, "result": parsed, "returncode": completed.returncode}
-
-
-def _preflight(args: argparse.Namespace) -> dict[str, Any]:
-    draft_path = Path(args.draft)
-    if not draft_path.exists():
-        return result("packaging_preflight", input_errors=[f"draft path does not exist: {draft_path}"])
-    draft = str(draft_path.resolve())
-    timeline = str(args.timeline)
-    calls = []
-    try:
-        calls.append(_run_editor_readonly(_editor_root(args.editor_root), ["probe", draft]))
-        calls.append(_run_editor_readonly(_editor_root(args.editor_root), ["inspect", draft, "--timeline", timeline]))
-        calls.append(_run_editor_readonly(_editor_root(args.editor_root), ["validate", draft, "--timeline", timeline]))
-    except RuntimeError as exc:
-        return result("packaging_preflight", errors=[str(exc)], status="blocked")
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        return result("packaging_preflight", input_errors=[str(exc)], status="blocked")
-    manifests = []
-    for call in calls:
-        payload = call.get("result")
-        if isinstance(payload, dict):
-            manifest = payload.get("replica_manifest")
-            if isinstance(manifest, dict):
-                manifests.append(manifest)
-    replica_manifest = manifests[-1] if manifests else None
-    editor_errors = []
-    editor_warnings = []
-    for call in calls:
-        payload = call.get("result")
-        if not isinstance(payload, dict):
-            continue
-        raw_errors = payload.get("errors")
-        if isinstance(raw_errors, list):
-            normalized_errors = [str(error) for error in raw_errors]
-        elif raw_errors in (None, ""):
-            normalized_errors = []
-        else:
-            normalized_errors = [str(raw_errors)]
-        command = call.get("command")
-        command_name = str(command[0]) if isinstance(command, list) and command else "editor command"
-        if payload.get("ok") is False and not normalized_errors:
-            normalized_errors = [f"{command_name} reported failure without structured errors"]
-        if payload.get("ok") is False or normalized_errors:
-            errors, warnings = classify_replica_errors(
-                normalized_errors,
-                payload.get("replica_manifest") or replica_manifest,
-            )
-            editor_errors.extend(errors)
-            editor_warnings.extend(warnings)
-        raw_warnings = payload.get("warnings", [])
-        if isinstance(raw_warnings, list):
-            editor_warnings.extend(str(warning) for warning in raw_warnings)
-    return result("packaging_preflight", data={"draft": draft, "timeline": timeline, "editor_readonly_calls": calls}, errors=editor_errors, warnings=editor_warnings, summary={"command_count": len(calls)})
 
 
 def _run(args: argparse.Namespace) -> dict[str, Any]:
@@ -160,26 +75,37 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         if args.kind == "generic":
             report = check_generic_content(args.paths, args.forbid)
             return result("packaging_generic_content_validation", data=report, errors=report.get("errors", []), input_errors=report.get("input_errors", []), warnings=report.get("warnings", []))
-    if command == "preflight":
-        return _preflight(args)
-    if command == "apply":
+    if command == "prepare":
         plan = unwrap_report(load_json(args.plan))
         catalog = unwrap_report(load_json(args.catalog)) if args.catalog else None
         pools = unwrap_report(load_json(args.pools)) if args.pools else None
         animation_capabilities = unwrap_report(load_json(args.animation_capabilities)) if args.animation_capabilities else None
         existing_audio = unwrap_report(load_json(args.existing_audio)) if args.existing_audio else None
-        return apply_packaging_plan(
+        return prepare_packaging_plan(
             plan,
             draft_path=args.draft,
             timeline=args.timeline,
             editor_root=_editor_root(args.editor_root),
+            prepared_path=args.prepared,
             sound_catalog=catalog,
             sound_pools=pools,
             animation_cache_root=args.animation_cache_root,
             animation_capabilities=animation_capabilities,
             animation_version=args.animation_version,
             existing_audio=existing_audio,
-            apply=args.apply,
+        )
+    if command == "commit":
+        prepared_path = resolve_prepared_path(args.prepared)
+        plan = unwrap_report(load_json(args.plan))
+        prepared = load_json(prepared_path)
+        return commit_prepared_packaging(
+            plan,
+            prepared,
+            approved_prepared_hash=args.approved_prepared_hash,
+            draft_path=args.draft,
+            timeline=args.timeline,
+            editor_root=_editor_root(args.editor_root),
+            prepared_path=prepared_path,
         )
     if command == "snapshot":
         return build_packaging_snapshot(unwrap_report(load_json(args.observation)))
@@ -282,23 +208,26 @@ def _parser() -> argparse.ArgumentParser:
     generic.add_argument("paths", nargs="+")
     generic.add_argument("--forbid", action="append", default=[])
 
-    preflight = sub.add_parser("preflight")
-    preflight.add_argument("--draft", required=True)
-    preflight.add_argument("--timeline", required=True)
-    preflight.add_argument("--editor-root")
+    prepare = sub.add_parser("prepare", help="validate a plan and persist its candidate without draft writes")
+    prepare.add_argument("--draft", required=True)
+    prepare.add_argument("--timeline", required=True, help="source timeline selector")
+    prepare.add_argument("--plan", required=True)
+    prepare.add_argument("--prepared", required=True, help="prepared artifact path under the skill temp directory")
+    prepare.add_argument("--catalog", help="current case sound catalog JSON")
+    prepare.add_argument("--pools", help="current case motion sound pools JSON")
+    prepare.add_argument("--animation-cache-root", help="current Jianying User Data/Cache root")
+    prepare.add_argument("--animation-capabilities", help="same-version, native-verified text animation capability JSON")
+    prepare.add_argument("--animation-version", help="installed Jianying version if it cannot be read from the editor DLL")
+    prepare.add_argument("--existing-audio", help="optional current audio/dialogue interval evidence JSON")
+    prepare.add_argument("--editor-root", help="jianying-editor skill root")
 
-    apply = sub.add_parser("apply", help="dry-run or apply a schema 1.2 packaging plan")
-    apply.add_argument("--draft", required=True)
-    apply.add_argument("--timeline", required=True, help="source timeline selector")
-    apply.add_argument("--plan", required=True)
-    apply.add_argument("--catalog", help="current case sound catalog JSON")
-    apply.add_argument("--pools", help="current case motion sound pools JSON")
-    apply.add_argument("--animation-cache-root", help="current Jianying User Data/Cache root")
-    apply.add_argument("--animation-capabilities", help="same-version, native-verified text animation capability JSON")
-    apply.add_argument("--animation-version", help="installed Jianying version if it cannot be read from the editor DLL")
-    apply.add_argument("--existing-audio", help="optional current audio/dialogue interval evidence JSON")
-    apply.add_argument("--editor-root", help="jianying-editor skill root")
-    apply.add_argument("--apply", action="store_true", help="write to a clone; default is dry-run")
+    commit = sub.add_parser("commit", help="commit an approved, unchanged prepared artifact to a clone")
+    commit.add_argument("--draft", required=True)
+    commit.add_argument("--timeline", required=True, help="source timeline selector")
+    commit.add_argument("--plan", required=True)
+    commit.add_argument("--prepared", required=True, help="prepared artifact path under the skill temp directory")
+    commit.add_argument("--approved-prepared-hash", required=True, help="exact prepared artifact hash approved for this commit")
+    commit.add_argument("--editor-root", help="jianying-editor skill root")
 
     snapshot = sub.add_parser("snapshot")
     snapshot.add_argument("--observation", required=True)
@@ -343,7 +272,41 @@ def main(argv: list[str] | None = None) -> int:
     try:
         raw_argv = sys.argv[1:] if argv is None else argv
         args = parser.parse_args(_normalize_output_options(raw_argv))
-        report = _run(args)
+        path_error = None
+        if args.command in {"prepare", "commit"}:
+            preparing = args.command == "prepare"
+            input_paths = [args.plan]
+            if preparing:
+                input_paths.extend(
+                    value for value in (
+                        args.catalog, args.pools, args.animation_capabilities, args.existing_audio,
+                    ) if value
+                )
+            else:
+                input_paths.append(args.prepared)
+            resolved_inputs = {Path(value).expanduser().resolve() for value in input_paths}
+            draft_root = Path(args.draft).expanduser().resolve()
+            prepared_output = Path(args.prepared).expanduser().resolve() if preparing else None
+            if preparing and prepared_output in resolved_inputs:
+                path_error = "prepared output path conflicts with input file"
+            if preparing and (prepared_output == draft_root or draft_root in prepared_output.parents):
+                path_error = path_error or "prepared output path is inside draft root"
+            report_output = getattr(args, "out", None)
+            if report_output:
+                resolved_report = Path(report_output).expanduser().resolve()
+                report_inside_draft = resolved_report == draft_root or draft_root in resolved_report.parents
+                if resolved_report in resolved_inputs or (preparing and resolved_report == prepared_output) or report_inside_draft:
+                    path_error = path_error or (
+                        "report output path is inside draft root"
+                        if report_inside_draft
+                        else "report output path conflicts with an input or prepared artifact"
+                    )
+                    args.out = None
+        if path_error:
+            report_type = "packaging_prepare" if args.command == "prepare" else "packaging_commit"
+            report = result(report_type, input_errors=[path_error], status="blocked")
+        else:
+            report = _run(args)
     except BlockedReportError as exc:
         report = result("packaging_cli", errors=[f"blocked input report: {exc}"], status="blocked")
         code = 1

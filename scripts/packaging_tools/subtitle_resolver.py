@@ -23,7 +23,7 @@ def _actual_text(operation: dict[str, Any]) -> str | None:
 
 
 def _visual_operations(group: dict[str, Any]) -> tuple[list[Any], list[str]]:
-    """Read the schema 1.2 visual field with explicit legacy compatibility."""
+    """Read the schema 2.0 visual field and its accepted field aliases."""
     aliases = [key for key in ("visual", "visuals", "visual_operations") if key in group]
     if not aliases:
         return [], []

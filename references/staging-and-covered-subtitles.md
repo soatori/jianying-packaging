@@ -1,34 +1,22 @@
 # Packaging staging and covered subtitles
 
-Creating or updating a staging timeline requires an approved content pass and an approved subtitle-alignment plan. It creates a reversible working timeline and an upper review layer.
+Creating or updating a staging timeline requires an approved content pass and an approved subtitle-alignment plan. Prepare builds a reversible candidate; commit creates the working clone and upper review layer only after candidate approval.
 
-This document also carries the text-track copy/staging operations formerly owned by a standalone `jianying-track-copy-staging` skill (now merged here). The schema 1.2 `packaging_tool.py apply` adapter translates approved operations and uses `jianying-editor`'s existing transactional project API; do not use `jianying-editor apply-plan` for packaging.
+This document also carries the text-track copy/staging operations formerly owned by a standalone `jianying-track-copy-staging` skill (now merged here). The schema 2.0 `prepare`/`commit` adapter translates approved operations and uses `jianying-editor`'s existing transactional project API; do not use `jianying-editor apply-plan` for packaging.
 
 ## Staging sequence
 
-1. Use a fresh clone by default and give it a purpose-specific, unique name. Tell the user which copy contains the staging surface. Use in-place editing only when the user explicitly requests it and the plan records the authorized exception and backup. Ask about the target only when the user's instruction leaves it ambiguous. A request to create or update staging authorizes that staging write; by itself, it does not authorize final application.
-2. Apply the schema 1.2 staging plan through `python scripts/packaging_tool.py apply --draft <draft> --timeline <source> --plan <plan.json> --apply`. The adapter creates the default clone through `JianyingProject` and writes the upper review layer through its existing transaction API. It blocks unless content and subtitle alignment are approved.
-   Closing JianYing before an apply is still recommended. The editor transaction's close check is advisory: a warning is carried in the apply report while the clone/write/read-back transaction continues. Dry-runs do not perform this close check.
-3. Keep the source subtitle track unchanged and visible.
-4. Copy complete candidate sentences to an upper track, preserving the approved sentence segmentation. Use phrase-, word-, or character-level fragments only when the user explicitly requests that granularity.
-5. Mark `packaging_staging=reviewing` and let the user review emphasis, wording, timing, segmentation, overlap, and obstruction.
-6. Record any user edits against the current saved staging timeline.
-7. Only after review approval, and only when final application was requested and authorized, apply templates, motion, effects, transitions, color, transform, background, and sound.
+1. Use a fresh clone by default and give it a purpose-specific, unique name. Use in-place editing only when the user explicitly requests it and the plan records the authorized exception and backup.
+2. Run `python scripts/packaging_tool.py prepare --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/staging.json`. A request to write staging authorizes this read-only candidate preparation. The CLI blocks unless content and subtitle alignment are approved.
+3. Review the change list and any HTML preview. Record approval for the exact preview hash in the plan. If the plan or source snapshot changes, prepare again.
+4. Run `python scripts/packaging_tool.py commit --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/staging.json --approved-prepared-hash <user-approved-hash>` only after the candidate and exact prepared-artifact hash are approved. Commit creates the default clone through `JianyingProject` and writes through its existing transaction API. Closing JianYing before commit is recommended; the editor close check is advisory.
+5. Keep the source subtitle track unchanged and visible. Copy complete candidate sentences to an upper track, preserving approved segmentation. Use phrase-, word-, or character-level fragments only when the user explicitly requests that granularity.
+6. Mark `packaging_staging=reviewing`, identify the saved copy, and wait for the user to review emphasis, wording, timing, segmentation, overlap, and obstruction. Record any user edits against the current saved staging timeline.
+7. Final packaging requires a separate request and authorization. It must pass the final-subtitle, staging, and remapping gates before prepare and commit.
 
-## Staging phase exits
-
-At each exit, report the current staging state and the next action. Do not
-advance from review to final application without approval and a request for
-that final phase.
-
-| Phase result | Next-step suggestion |
-|---|---|
-| Clone and upper review layer are saved | Set `packaging_staging=reviewing`; identify the copy and ask the user to review emphasis, wording, timing, overlap, and obstruction. |
-| User returns staging edits | Re-read the current saved timeline, record the edits, and refresh any plan/report invalidated by the new snapshot. Keep staging in `reviewing`. |
-| Staging is approved | Continue to final planning only if final application was requested and its gates pass; otherwise deliver the approved staging state and stop. |
-| Snapshot is stale or text/layout differs | Rebuild the affected plan and review surface from current saved state before further writes. |
-| A semantic or factual issue is found | Return that unit to `jianying-rough-cut`; do not absorb it as display-only packaging. |
-| Final apply is read back by the editor | Reopen Jianying and complete the visual/audio review before calling the package verified. |
+Use `jianying-rough-cut/references/workflow-state.md` for the shared phase
+gates. A saved staging copy remains `packaging_staging=reviewing` until the
+user approves it; no final package follows automatically.
 
 ## Phase-specific covered-subtitle policy
 

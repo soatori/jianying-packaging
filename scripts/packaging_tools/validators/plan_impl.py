@@ -45,7 +45,7 @@ MOTIONS = {
     "pop", "reveal", "typing", "sweep", "impact", "mechanical_open",
     "warning_pulse", "confirmation", "none", "custom",
 }
-SUPPORTED_SCHEMA_VERSIONS = {"1.0", "1.1", "1.2"}
+SUPPORTED_SCHEMA_VERSIONS = {"2.0"}
 PACKAGING_PHASES = {"staging", "final"}
 REMAP_STATUSES = {"not_required", "pending", "verified", "blocked"}
 LAYOUT_POSITION_MODES = {"relative_template", "legacy_absolute"}
@@ -578,7 +578,7 @@ def _validate_sound_pool(
 ) -> tuple[dict[str, Any] | None, set[str]]:
     pool_ref = audio.get("candidate_pool_ref")
     if not is_nonempty_string(pool_ref):
-        errors.append(f"{path}.candidate_pool_ref: required for schema 1.2 audio")
+        errors.append(f"{path}.candidate_pool_ref: required for schema 2.0 audio")
         return None, set()
     pool_data: dict[str, Any] | None = None
     inline_used = False
@@ -660,7 +660,7 @@ def _validate_sound_pool(
         else:
             warnings.append(message)
     elif catalog_records[catalog_ref].get("status") != "verified" and final_or_apply:
-        errors.append(f"{path}.catalog_ref: final/apply requires a verified catalog record")
+        errors.append(f"{path}.catalog_ref: final plan requires a verified catalog record")
 
     return pool_data, candidate_ids
 
@@ -686,7 +686,7 @@ def _validate_final_subtitle_units(
 ) -> dict[str, str]:
     units = source.get("final_subtitle_units")
     if not isinstance(units, list) or not units:
-        errors.append("source.final_subtitle_units: required non-empty array for schema 1.2")
+        errors.append("source.final_subtitle_units: required non-empty array for schema 2.0")
         return {}
 
     result: dict[str, str] = {}
@@ -710,7 +710,7 @@ def _validate_final_subtitle_units(
     return result
 
 
-def validate_v12_contract(
+def validate_v20_contract(
     data: dict[str, Any],
     errors: list[str],
     warnings: list[str],
@@ -721,7 +721,7 @@ def validate_v12_contract(
     final_subtitle_hashes = _validate_final_subtitle_units(source, errors)
     final_reference = source.get("final_subtitle_reference")
     if not isinstance(final_reference, dict):
-        errors.append("source.final_subtitle_reference: required object for schema 1.2")
+        errors.append("source.final_subtitle_reference: required object for schema 2.0")
     else:
         for field in ("id", "hash"):
             if not is_nonempty_string(final_reference.get(field)):
@@ -731,7 +731,7 @@ def validate_v12_contract(
 
     comparison = data.get("comparison")
     if not isinstance(comparison, dict):
-        errors.append("comparison: required object for schema 1.2")
+        errors.append("comparison: required object for schema 2.0")
     else:
         for field in ("source_order_hash", "target_order_hash"):
             if not is_nonempty_string(comparison.get(field)):
@@ -753,17 +753,17 @@ def validate_v12_contract(
     allow_in_place = execution.get("allow_in_place") is True and is_nonempty_string(authorization_note)
     allow_manual_overwrite = execution.get("allow_manual_overwrite") is True and is_nonempty_string(authorization_note)
     if execution.get("clone_source") is not True and not allow_in_place:
-        errors.append("execution.clone_source: must be true for schema 1.2")
+        errors.append("execution.clone_source: must be true for schema 2.0")
     if execution.get("pre_write_backup") != "required":
-        errors.append("execution.pre_write_backup: must be required for schema 1.2")
+        errors.append("execution.pre_write_backup: must be required for schema 2.0")
     if execution.get("preserve_source") is not True and not allow_in_place:
-        errors.append("execution.preserve_source: must be true for schema 1.2")
+        errors.append("execution.preserve_source: must be true for schema 2.0")
     if execution.get("preserve_manual_edits") is not True and not allow_manual_overwrite:
-        errors.append("execution.preserve_manual_edits: must be true for schema 1.2")
+        errors.append("execution.preserve_manual_edits: must be true for schema 2.0")
 
     context = execution.get("context_contract")
     if not isinstance(context, dict):
-        errors.append("execution.context_contract: required for schema 1.2")
+        errors.append("execution.context_contract: required for schema 2.0")
     else:
         expected_context = {
             "anchor_policy": "runtime_final_subtitle_x0_y0",
@@ -934,21 +934,19 @@ def validate_plan(
         layout_registry = _load_reference_json("layout-template-registry.json")
 
     schema_version = data.get("schema_version")
-    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
-        errors.append("schema_version: expected '1.0', '1.1', or '1.2'")
+    if not isinstance(schema_version, str) or schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        return [f"schema_version: expected '2.0', got {schema_version!r}"], warnings
     is_v11 = schema_version == "1.1"
-    is_v12 = schema_version == "1.2"
-    if schema_version == "1.0":
-        warnings.append("schema_version 1.0 is legacy; migrate to 1.2 before apply")
+    is_v20 = schema_version == "2.0"
 
     alignment_status: str | None = None
     final_subtitle_hashes: dict[str, str] = {}
     reuse_cap = 3
     if is_v11:
         alignment_status, reuse_cap = validate_v11_contract(data, errors, warnings)
-    if is_v12:
+    if is_v20:
         alignment_status = _validate_common_source_status(data, errors)
-        final_subtitle_hashes = validate_v12_contract(data, errors, warnings)
+        final_subtitle_hashes = validate_v20_contract(data, errors, warnings)
 
     source = data.get("source")
     if not isinstance(source, dict):
@@ -1032,16 +1030,16 @@ def validate_plan(
                 errors.append("execution.phase=final requires staging.review_status=approved")
             if alignment_status != "approved":
                 errors.append("execution.phase=final requires approved subtitle alignment")
-        if is_v12 and phase not in PACKAGING_PHASES:
+        if is_v20 and phase not in PACKAGING_PHASES:
             errors.append("execution.phase: must be staging or final")
-        if is_v12 and mode == "apply" and phase in PACKAGING_PHASES:
+        if is_v20 and mode == "apply" and phase in PACKAGING_PHASES:
             source_status = data.get("source")
             content_status = source_status.get("content_pass") if isinstance(source_status, dict) else None
             if content_status != "approved":
                 errors.append("execution.mode=apply requires source.content_pass=approved")
             if alignment_status != "approved":
                 errors.append("execution.mode=apply requires source.subtitle_alignment.status=approved")
-        if is_v12 and phase == "final":
+        if is_v20 and phase == "final":
             staging = data.get("staging")
             if not isinstance(staging, dict) or staging.get("review_status") != "approved":
                 errors.append("execution.phase=final requires staging.review_status=approved")
@@ -1060,8 +1058,6 @@ def validate_plan(
             warnings.append("disable_after_readback requires visual read-back; it is not a success condition by itself")
 
         if mode == "apply":
-            if schema_version in {"1.0", "1.1"}:
-                errors.append(f"schema_version {schema_version} must be migrated before apply (to 1.2)")
             if target_clone_source is not True and not allow_in_place:
                 errors.append(
                     "apply requires target.clone_source=true unless allow_in_place is explicitly authorized"
@@ -1183,7 +1179,7 @@ def validate_plan(
 
         semantic_refs: set[str] = set()
         auxiliary_refs: set[str] = set()
-        if is_v12:
+        if is_v20:
             semantic_refs = set(validate_string_list(
                 f"{path}.semantic_unit_refs",
                 group.get("semantic_unit_refs"),
@@ -1202,7 +1198,7 @@ def validate_plan(
                     )
             subtitle_anchor = group.get("subtitle_anchor")
             if not isinstance(subtitle_anchor, dict):
-                errors.append(f"{path}.subtitle_anchor: required object for schema 1.2")
+                errors.append(f"{path}.subtitle_anchor: required object for schema 2.0")
             else:
                 if not is_nonempty_string(subtitle_anchor.get("unit_id")):
                     errors.append(f"{path}.subtitle_anchor.unit_id: required")
@@ -1223,7 +1219,7 @@ def validate_plan(
                 errors.append(f"{path}.remap_status: final groups require not_required or verified")
             for field in ("source_order_hash", "target_order_hash"):
                 if not is_nonempty_string(group.get(field)):
-                    errors.append(f"{path}.{field}: required for schema 1.2")
+                    errors.append(f"{path}.{field}: required for schema 2.0")
             if (
                 is_nonempty_string(group.get("source_order_hash"))
                 and is_nonempty_string(group.get("target_order_hash"))
@@ -1350,12 +1346,12 @@ def validate_plan(
             if operation_valid and operation in {"clone_template", "copy_from_subtitle", "modify_text"} and object_type == "text" and not is_nonempty_string(visual.get("text")):
                 errors.append(f"{vpath}.text: required for {operation}")
 
-            if is_v12 and object_type == "text" and (
+            if is_v20 and object_type == "text" and (
                 operation == "copy_from_subtitle" or is_nonempty_string(visual.get("text"))
             ):
                 text_ref = visual.get("text_ref")
                 if not is_nonempty_string(text_ref):
-                    errors.append(f"{vpath}.text_ref: required for schema 1.2 text operations")
+                    errors.append(f"{vpath}.text_ref: required for schema 2.0 text operations")
                 text_hash = visual.get("text_hash")
                 if operation == "copy_from_subtitle" and not is_nonempty_string(text_hash):
                     errors.append(f"{vpath}.text_hash: required for copy_from_subtitle text")
@@ -1448,8 +1444,8 @@ def validate_plan(
 
             animation = visual.get("animation")
             if animation is not None:
-                if not is_v12:
-                    errors.append(f"{vpath}.animation: supported only for schema 1.2")
+                if not is_v20:
+                    errors.append(f"{vpath}.animation: supported only for schema 2.0")
                 if not isinstance(animation, dict):
                     errors.append(f"{vpath}.animation: must be an object")
                 else:
@@ -1487,15 +1483,15 @@ def validate_plan(
                         f"{vpath}.text: line exceeds max_chars_per_line={max_chars}; split it or add risk_note"
                     )
 
-        if is_v12:
+        if is_v20:
             has_visual_operation = any(
-                isinstance(visual, dict) and visual.get("operation") not in {None, "none"}
+            isinstance(visual, dict) and visual.get("operation") not in (None, "none")
                 for visual in visuals
             )
             if has_visual_operation:
                 if "layout" not in group:
                     if phase == "final":
-                        errors.append(f"{path}.layout: required for schema 1.2 final visual groups")
+                        errors.append(f"{path}.layout: required for schema 2.0 final visual groups")
                 else:
                     validate_layout(
                         path + ".layout",
@@ -1526,7 +1522,7 @@ def validate_plan(
                 errors.append(f"{path}.audio.reason: required for a sound action")
             if not is_nonempty_string(audio.get("sound_family")):
                 errors.append(f"{path}.audio.sound_family: required for a sound action")
-            if is_v12 and not is_nonempty_string(group.get("sound_selection_basis")):
+            if is_v20 and not is_nonempty_string(group.get("sound_selection_basis")):
                 errors.append(f"{path}.sound_selection_basis: required when a sound is selected")
             if is_v11:
                 if not is_nonempty_string(audio.get("motion_family")):
@@ -1540,12 +1536,12 @@ def validate_plan(
                     errors.append(f"{path}.audio.reuse_count: exceeds configured reuse cap {reuse_cap}")
             sound_pool: dict[str, Any] | None = None
             sound_pool_ids: set[str] = set()
-            if is_v12:
+            if is_v20:
                 motion_family = audio.get("motion_family")
                 if motion_family not in MOTION_SOUND_FAMILIES or motion_family == "none":
                     errors.append(f"{path}.audio.motion_family: must be a supported audible motion family")
                 if not is_nonempty_string(audio.get("catalog_ref")):
-                    errors.append(f"{path}.audio.catalog_ref: required for schema 1.2")
+                    errors.append(f"{path}.audio.catalog_ref: required for schema 2.0")
                 sound_form = audio.get("sound_form")
                 if sound_form not in SOUND_FORMS:
                     errors.append(f"{path}.audio.sound_form: invalid")
@@ -1590,7 +1586,7 @@ def validate_plan(
                             break
                 if selected_status != "verified":
                     if final_or_apply:
-                        errors.append(f"{path}.audio.selected_preset_id: final/apply requires a verified candidate")
+                        errors.append(f"{path}.audio.selected_preset_id: final plan requires a verified candidate")
                     else:
                         warnings.append(f"{path}.audio.selected_preset_id: candidate is not verified")
             if phase == "staging":
@@ -1681,7 +1677,7 @@ def validate_plan(
                     f"{path}.audio.target_range", audio.get("target_range"), errors
                 )
 
-            if is_v12:
+            if is_v20:
                 trim_policy = audio.get("trim_policy")
                 text_range = None
                 if "text_range" in audio:

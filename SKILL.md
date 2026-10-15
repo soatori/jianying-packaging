@@ -11,7 +11,7 @@ Use this skill to audit a saved timeline or plan semantic emphasis and its visua
 
 - Owns emphasis selection, flower text, group layout, templates, motion, transitions, overlays, and sound rationale tied to visible events.
 - jianying-rough-cut owns transcript correction, speech cuts, semantic rewriting, and subtitle alignment. Return content errors there.
-- jianying-editor owns draft decoding, encryption, replica discovery, transactional backups, low-level writes, read-back, validation, and rollback. This skill owns the schema 1.2 plan-to-draft adapter and invokes those existing transaction APIs; do not route packaging plans through `jianying-editor apply-plan`, which only applies `keep_blocks`.
+- jianying-editor owns draft decoding, encryption, replica discovery, transactional backups, low-level writes, read-back, validation, and rollback. This skill owns the schema 2.0 prepare/commit adapter and invokes those existing transaction APIs; do not route packaging plans through `jianying-editor apply-plan`, which only applies `keep_blocks`.
 - The latest saved, user-confirmed timeline is authoritative for text, timing, segmentation, styles, layer order, visibility, and manual sound choices. Re-read it before each pass; do not apply stale locators or restore removed choices.
 - Keep project names, copy, timecodes, IDs, assets, colors, and one-off style choices in external case references, not in this reusable skill.
 
@@ -37,38 +37,49 @@ For semantic categories, levels, grouping, and sound rationale, read [references
 ## Modes and workflow
 
 - **analysis:** read-only audit; report observed text, layout, template, motion, transition, and sound issues.
-- **staging:** prepare a reversible upper-track review surface; leave the original subtitle track unchanged and visible for review, and omit final sound/effect writes.
-- **final:** prepare or apply an approved packaging plan after staging, subtitle authority, and remapping gates are satisfied.
+- **staging:** prepare a reversible upper-track candidate; leave the original subtitle track unchanged and visible for review, and omit final sound/effect writes.
+- **final:** prepare the approved visual/audio candidate after staging, subtitle authority, and remapping gates are satisfied.
 
-Choose analysis for review-only requests; it is read-only and may run at any workflow state. Staging and final writes require authorization for that specific phase and target. An explicit request to perform the write supplies that authorization while its scope and target remain unchanged; do not ask for it again. Approval of a rough-cut plan or packaging plan alone does not authorize a new write.
+Choose analysis by default; it is read-only and may run at any workflow state. Only an explicit packaging write request may enter `prepare`; prepare persists a candidate but does not write a draft. `commit` requires explicit approval of that candidate for the same plan and target. Do not ask again for an already authorized operation while its scope and target remain unchanged. Approval of a rough-cut plan or packaging plan alone does not authorize a draft write.
 
-1. Confirm the current draft/timeline, saved state, requested scope, and applicable authorization. If the requested operation is unclear, resolve that before preparing an executable plan.
-2. To prepare a packaging plan, require `content_pass` to be `stable` or `approved` and `subtitle_alignment` to be `approved`. Before creating or updating a staging timeline, require both states to be `approved`. Final application additionally requires approved staging, an approved final-subtitle reference, and verified or not-required remapping. Read the final subtitles with neighboring context. Inspect the saved timeline through jianying-editor when the request requires draft evidence, compare it with the latest manual reference, and preserve manual choices unless the user asks for a change.
-3. If a visual style or layout choice is still open, show a comparison preview before writing. In staging, let the user review selected sentences, grouping, timing, overlap, and obstruction.
+1. Confirm the current draft/timeline, saved state, requested scope, and authorization. If the requested operation is unclear, keep the work read-only.
+2. To prepare a packaging plan, require `content_pass` to be `stable` or `approved` and `subtitle_alignment` to be `approved`. Before staging commit, require both states to be `approved`. Final also requires approved staging, an approved final-subtitle reference, and verified or not-required remapping. Read the final subtitles with neighboring context. Inspect the saved timeline through jianying-editor when the request requires draft evidence, compare it with the latest manual reference, and preserve manual choices unless the user asks for a change.
+3. If a visual style or layout choice is still open, show a comparison preview. Let the user review selected sentences, grouping, timing, overlap, and obstruction before commit.
 4. Group related text and graphic layers by perceptual event. Resolve layout from the approved subtitle transform and a verified reference; do not guess raw Jianying coordinates, color fields, or effect IDs.
-5. Build and validate a plan with `python scripts/packaging_tool.py validate plan <plan.json>`. When sound is in scope, supply the current case's verified `--catalog <case-catalog.json>` and `--pools <case-pools.json>`; missing inputs remain unresolved and never fall back to bundled assets.
-6. Run `apply` without `--apply` first. For a layout or animation change, open the reported HTML preview, review its measured text bounds, safe zone, position, track, alpha, and duration, then record `review_report.visual_preview_status: "approved"` and the exact `visual_preview_sha256` in the plan. `--apply` blocks if that approval is missing or its hash no longer matches the current candidate. The HTML is a geometry/timing preview, not proof that Jianying retains or renders an effect. For animation plans, pass `--animation-cache-root` when cache discovery is ambiguous; include same-version capability evidence with `--animation-capabilities` and identify the running version with `--animation-version` when it cannot be detected. For sound, pass the same `--catalog` and `--pools` used during validation. If current timeline audio roles do not identify dialogue, supply `--existing-audio <dialogue-intervals.json>`; unresolved dialogue collision evidence blocks sound apply. The adapter supports schema 1.2, clones by default, uses the existing `JianyingProject` transaction API, and blocks unsupported prototypes/field mappings before writing. It copies current-draft media/template closures; external media must be staged first. Requested motion must have a non-empty motion payload in the prototype. Read back the result, validate it against the approved plan and source, and inspect ambiguous visual/audio results in Jianying after reopening.
+5. Build and validate a schema 2.0 plan with `python scripts/packaging_tool.py validate plan <plan.json>`. When sound is in scope, supply the current case's verified `--catalog <case-catalog.json>` and `--pools <case-pools.json>`; missing inputs remain unresolved and never fall back to bundled assets.
+6. Run `prepare` with `--prepared temp/prepared.json`. This persists the validated candidate, hashes, source snapshot, changes, and preview under the skill's `temp/` and does not write a draft. Record the reported `prepared_artifact_hash` for the later approval step. For layout or animation changes, open the reported HTML preview and review its text bounds, safe zone, position, track, alpha, and duration. Record `review_report.visual_preview_status: "approved"` and the exact `visual_preview_sha256` in the plan. For animation plans, pass `--animation-cache-root` when cache discovery is ambiguous; include same-version capability evidence with `--animation-capabilities` and identify the running version with `--animation-version` when it cannot be detected. For sound, pass the current case `--catalog` and `--pools`; if current audio roles do not identify dialogue, supply `--existing-audio <dialogue-intervals.json>`.
+7. Run `commit` only after the user approves that exact prepared-artifact hash and the required gates. Pass the hash from the prepare report as `--approved-prepared-hash`; do not reread it from the artifact after review. Commit checks the approved hash, plan, prepared artifact, preview, and source snapshot before the clone-first transaction. It does not rebuild the candidate. The HTML preview is geometry/timing evidence, not proof that Jianying retains or renders an effect. Reopen the result and complete visual/audio review.
 
-`stable` can be used to prepare a review plan. Any staging or final apply
+`stable` can be used to prepare a review plan. Any staging or final commit
 requires `source.content_pass: approved` and
 `source.subtitle_alignment.status: approved`; final also requires approved
 staging and verified/not-required remapping. The CLI enforces these status
 gates. Only the Agent can confirm that the current conversation authorized the
-write; `execution.mode=apply` and the `--apply` flag do not create that
-authorization.
+write; `execution.mode=apply` does not create that authorization.
 
 ```powershell
-python scripts/packaging_tool.py apply `
+python scripts/packaging_tool.py prepare `
   --draft "<draft-path>" `
   --timeline "<source-timeline>" `
-  --plan "<schema-1.2-plan.json>" `
+  --plan "<schema-2.0-plan.json>" `
+  --prepared "temp/prepared.json" `
   --catalog "<case-catalog.json>" `
   --pools "<case-pools.json>" `
-  --existing-audio "<dialogue-intervals.json>" `
-  --apply
+  --existing-audio "<dialogue-intervals.json>"
 ```
 
-Final/apply layout writes require numeric `layout.constraints.safe_zone` bounds
+After preview approval, commit the same unchanged plan and prepared artifact:
+
+```powershell
+python scripts/packaging_tool.py commit `
+  --draft "<draft-path>" `
+  --timeline "<source-timeline>" `
+  --plan "<schema-2.0-plan.json>" `
+  --prepared "temp/prepared.json" `
+  --approved-prepared-hash "<exact-hash-approved-by-user>"
+```
+
+Final layout commits require numeric `layout.constraints.safe_zone` bounds
 in normalized canvas coordinates and `project_profile.canvas_width`/
 `canvas_height`. The adapter measures the current local font file from the text
 material and blocks automatic layout if it cannot get reliable glyph metrics.
@@ -76,7 +87,7 @@ Relative layout changes require preview approval; position and alpha changes
 are previewed as well. `global_alpha` is written only when the current text
 segment prototype already carries that field. Hiding remains a separate
 `visible` property. Auxiliary text must target an existing unique topmost text
-track and must not overlap another segment on that track; apply never creates
+track and must not overlap another segment on that track; commit never creates
 that track automatically.
 
 Source replica checks use `ReplicaManifest` roles: drift in an associated
@@ -90,22 +101,12 @@ The adapter also derives dialogue intervals from recognized audio material or
 track-role metadata in the current timeline; unknown roles are never treated
 as proof that dialogue is absent.
 
-## Phase handoffs and next-step suggestions
+## Phase and clone state
 
-At each phase exit, report the result, one recommended next step, and any
-pending approval or evidence gate. Recommendations describe what may happen
-next; they do not authorize or automatically perform another write.
-
-| Phase result | Next-step suggestion |
-|---|---|
-| Read-only analysis is complete | Deliver the observed issues and stop. Start plan preparation only if requested. |
-| Plan validates, but staging was not requested | Deliver the plan and stop without changing a draft. |
-| Plan validates and staging was requested | Check the stricter staging state and authorization gates; if either is missing, name it and stop. Otherwise create the default clone and review surface. |
-| Staging is saved as `reviewing` | Tell the user which copy to open and what to review; wait for their feedback. |
-| User edits staging or the saved snapshot changed | Re-decode the current source and target, refresh the report/plan, and return to staging review. Do not reuse stale locators. |
-| Staging is approved | Apply the final package only when final was requested and its gates pass; otherwise deliver the approved staging state and stop. |
-| Final apply and editor read-back are complete | Reopen Jianying and perform the visual/audio review before reporting the package as verified. |
-| Semantic issue or visual/audio failure is found | Return semantic issues to rough-cut; revise packaging issues and repeat the affected review. |
+Use the shared `jianying-rough-cut/references/workflow-state.md` phase table for
+approval gates and handoffs. Clone names must follow the active editor
+workflow's naming convention; this reusable skill does not prescribe literal
+project labels or suffixes.
 
 When requesting a clone, preserve the source labels required by the active project's naming convention and give the copy a purpose-specific, unique name. The naming tokens and suffix format come from the active project/editor workflow; this skill does not prescribe literal sample names or a timezone.
 
@@ -153,4 +154,4 @@ Read only what the requested operation needs:
 - State gates and write authorization: always read [references/workflow-state.md](../jianying-rough-cut/references/workflow-state.md) before staging or final execution.
 - Changed timeline order: read [references/timeline-comparison.md](../jianying-rough-cut/references/timeline-comparison.md) and verify semantic remapping before reusing earlier timing.
 
-Read-only analysis commands do not write drafts. Schema 1.2 writes go through this Skill's `apply` adapter and the existing jianying-editor transaction API; all encryption, backup, replica, and read-back primitives remain in jianying-editor.
+Read-only analysis and prepare commands do not write drafts. Schema 2.0 commits go through this Skill's `commit` adapter and the existing jianying-editor transaction API; encryption, backup, replica, read-back, and rollback primitives remain in jianying-editor. Schema 1.2 and older plans and the legacy `apply`/`preflight` commands are unsupported.

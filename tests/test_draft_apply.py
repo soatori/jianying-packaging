@@ -19,14 +19,378 @@ if str(SCRIPT_ROOT) not in sys.path:
 
 from packaging_tools import draft_apply
 from packaging_tool import main as packaging_main
-from tests.test_plan_validator import valid_plan_v12
+from tests.test_plan_validator import valid_plan_v20
 from tests.test_plan_validator import synthetic_sound_catalog, synthetic_sound_pools
 
 
 class DraftApplyTests(unittest.TestCase):
-    def apply_with_approved_preview(self, plan: dict, **kwargs):
+    def test_prepare_and_commit_operations_are_exposed(self):
+        self.assertTrue(callable(getattr(draft_apply, "prepare_packaging_plan", None)))
+        self.assertTrue(callable(getattr(draft_apply, "commit_prepared_packaging", None)))
+
+    def test_prepare_persists_candidate_and_never_clones_or_writes(self):
+        prepare = getattr(draft_apply, "prepare_packaging_plan", None)
+        self.assertTrue(callable(prepare))
+        if not callable(prepare):
+            return
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            temp_root = root / "temp"
+            prepared_path = temp_root / "prepared.json"
+            project = FakeProject(root, draft_value())
+            plan = staging_plan(str(root.resolve()))
+
+            report = prepare(
+                plan,
+                draft_path=directory,
+                timeline="manual",
+                editor_root=Path("unused"),
+                prepared_path=prepared_path,
+                sound_catalog={"presets": []},
+                sound_pools={"pools": []},
+                project=project,
+                editor_api=FakeEditorApi,
+                temp_root=temp_root,
+            )
+
+            self.assertTrue(report["ok"], report)
+            artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+            self.assertEqual(artifact["prepared_schema_version"], "2.0")
+            self.assertEqual(artifact["plan_hash"], draft_apply._prepared_plan_hash(plan))
+            self.assertEqual(artifact["prepared_artifact_hash"], draft_apply._prepared_artifact_hash(artifact))
+            self.assertEqual(report["data"]["prepared_artifact_hash"], artifact["prepared_artifact_hash"])
+            self.assertEqual(artifact["source_timeline_hash"], draft_apply._hash_value(project.values["T1"]))
+            self.assertEqual(artifact["candidate_hash"], draft_apply._hash_value(artifact["candidate_value"]))
+            self.assertEqual(artifact["source_snapshot"]["row_count"], 4)
+            self.assertEqual(report["data"]["draft_writes"], 0)
+            self.assertEqual(project.clone_calls, [])
+            self.assertEqual(project.write_calls, [])
+
+    def test_commit_rejects_stale_source_and_modified_candidate_before_clone(self):
+        prepare = getattr(draft_apply, "prepare_packaging_plan", None)
+        commit = getattr(draft_apply, "commit_prepared_packaging", None)
+        self.assertTrue(callable(prepare))
+        self.assertTrue(callable(commit))
+        if not callable(prepare) or not callable(commit):
+            return
+        for mutation in ("plan", "source", "candidate"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                temp_root = root / "temp"
+                prepared_path = temp_root / "prepared.json"
+                project = FakeProject(root, draft_value())
+                plan = staging_plan(str(root.resolve()))
+                prepared = prepare(
+                    plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                    prepared_path=prepared_path, sound_catalog={"presets": []}, sound_pools={"pools": []},
+                    project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+                )
+                self.assertTrue(prepared["ok"], prepared)
+                artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+                approved_prepared_hash = artifact["prepared_artifact_hash"]
+                if artifact.get("visual_preview_sha256"):
+                    plan["review_report"] = {
+                        "visual_preview_status": "approved",
+                        "visual_preview_sha256": artifact["visual_preview_sha256"],
+                    }
+                if mutation == "source":
+                    project.values["T1"]["tracks"][0]["segments"][0]["visible"] = False
+                elif mutation == "candidate":
+                    artifact["candidate_value"]["duration"] += 1
+                    artifact["prepared_artifact_hash"] = draft_apply._prepared_artifact_hash(artifact)
+                    prepared_path.write_text(json.dumps(artifact), encoding="utf-8")
+                else:
+                    plan["groups"][0]["range"]["duration_us"] += 1
+                report = commit(
+                    plan, artifact, approved_prepared_hash=approved_prepared_hash,
+                    draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                    project=project, editor_api=FakeEditorApi, temp_root=temp_root, prepared_path=prepared_path,
+                )
+                self.assertFalse(report["ok"], report)
+                self.assertTrue(any("stale_preparation" in error for error in report["errors"]), report)
+                self.assertEqual(project.clone_calls, [])
+                self.assertEqual(project.write_calls, [])
+
+    def test_commit_rejects_rehashed_candidate_after_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            temp_root = root / "temp"
+            prepared_path = temp_root / "prepared.json"
+            project = FakeProject(root, draft_value())
+            plan = staging_plan(str(root.resolve()))
+            prepared_report = draft_apply.prepare_packaging_plan(
+                plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                prepared_path=prepared_path, sound_catalog={"presets": []}, sound_pools={"pools": []},
+                project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+            )
+            self.assertTrue(prepared_report["ok"], prepared_report)
+            artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+            approved_hash = artifact["prepared_artifact_hash"]
+            artifact["candidate_value"]["duration"] += 1
+            artifact["candidate_hash"] = draft_apply._hash_value(artifact["candidate_value"])
+            artifact["prepared_artifact_hash"] = draft_apply._prepared_artifact_hash(artifact)
+            prepared_path.write_text(json.dumps(artifact), encoding="utf-8")
+
+            report = draft_apply.commit_prepared_packaging(
+                plan,
+                artifact,
+                approved_prepared_hash=approved_hash,
+                draft_path=directory,
+                timeline="manual",
+                editor_root=Path("unused"),
+                project=project,
+                editor_api=FakeEditorApi,
+                temp_root=temp_root,
+                prepared_path=prepared_path,
+            )
+
+            self.assertFalse(report["ok"], report)
+            self.assertTrue(any("stale_preparation" in error for error in report["errors"]), report)
+            self.assertEqual(project.clone_calls, [])
+            self.assertEqual(project.write_calls, [])
+
+    def test_commit_rejects_changed_source_snapshot_dimensions(self):
+        prepare = getattr(draft_apply, "prepare_packaging_plan", None)
+        commit = getattr(draft_apply, "commit_prepared_packaging", None)
+        self.assertTrue(callable(prepare))
+        self.assertTrue(callable(commit))
+        if not callable(prepare) or not callable(commit):
+            return
+        for dimension in ("duration", "row_count", "visibility", "transform"):
+            with self.subTest(dimension=dimension), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                temp_root = root / "temp"
+                prepared_path = temp_root / "prepared.json"
+                project = FakeProject(root, draft_value())
+                plan = staging_plan(str(root.resolve()))
+                prepared = prepare(
+                    plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                    prepared_path=prepared_path, sound_catalog={"presets": []}, sound_pools={"pools": []},
+                    project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+                )
+                self.assertTrue(prepared["ok"], prepared)
+                artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+                approved_prepared_hash = artifact["prepared_artifact_hash"]
+                source = project.values["T1"]
+                if dimension == "duration":
+                    source["duration"] += 1
+                elif dimension == "row_count":
+                    extra = copy.deepcopy(source["tracks"][0]["segments"][0])
+                    extra["id"] = "extra-row"
+                    source["tracks"][0]["segments"].append(extra)
+                elif dimension == "visibility":
+                    source["tracks"][0]["segments"][0]["visible"] = False
+                else:
+                    source["tracks"][0]["segments"][0]["clip"]["transform"]["x"] += 1
+                artifact["source_timeline_hash"] = draft_apply._hash_value(source)
+                artifact["prepared_artifact_hash"] = draft_apply._prepared_artifact_hash(artifact)
+                prepared_path.write_text(json.dumps(artifact), encoding="utf-8")
+                if artifact.get("visual_preview_sha256"):
+                    plan["review_report"] = {
+                        "visual_preview_status": "approved",
+                        "visual_preview_sha256": artifact["visual_preview_sha256"],
+                    }
+                report = commit(
+                    plan, artifact, approved_prepared_hash=approved_prepared_hash,
+                    draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                    project=project, editor_api=FakeEditorApi, temp_root=temp_root, prepared_path=prepared_path,
+                )
+                self.assertFalse(report["ok"], report)
+                self.assertTrue(any("stale_preparation" in error for error in report["errors"]), report)
+                self.assertEqual(project.clone_calls, [])
+                self.assertEqual(project.write_calls, [])
+
+    def test_commit_does_not_repeat_prepare_work(self):
+        prepare = getattr(draft_apply, "prepare_packaging_plan", None)
+        commit = getattr(draft_apply, "commit_prepared_packaging", None)
+        self.assertTrue(callable(prepare))
+        self.assertTrue(callable(commit))
+        if not callable(prepare) or not callable(commit):
+            return
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            temp_root = root / "temp"
+            prepared_path = temp_root / "prepared.json"
+            project = FakeProject(root, draft_value())
+            plan = staging_plan(str(root.resolve()))
+            prepared = prepare(
+                plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                prepared_path=prepared_path, sound_catalog={"presets": []}, sound_pools={"pools": []},
+                project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+            )
+            self.assertTrue(prepared["ok"], prepared)
+            artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+            approved_prepared_hash = artifact["prepared_artifact_hash"]
+            if artifact.get("visual_preview_sha256"):
+                plan["review_report"] = {
+                    "visual_preview_status": "approved",
+                    "visual_preview_sha256": artifact["visual_preview_sha256"],
+                }
+            with (
+                patch.object(draft_apply, "validate_plan", side_effect=AssertionError("plan validator reran")),
+                patch.object(draft_apply, "check_sound_operations", side_effect=AssertionError("sound check reran")),
+                patch.object(draft_apply, "build_animation_inventory", side_effect=AssertionError("animation inventory reran")),
+                patch.object(draft_apply, "transform_packaging_plan", side_effect=AssertionError("transform reran")),
+                patch.object(draft_apply, "build_html_preview", side_effect=AssertionError("preview reran")),
+            ):
+                report = commit(
+                    plan, artifact, approved_prepared_hash=approved_prepared_hash,
+                    draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                    project=project, editor_api=FakeEditorApi, temp_root=temp_root, prepared_path=prepared_path,
+                )
+
+            self.assertTrue(report["ok"], report)
+            self.assertEqual(project.clone_calls, [("T1", "packaged")])
+            self.assertEqual(project.write_calls, ["T2"])
+
+    def test_commit_does_not_repeat_sound_animation_transform_or_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = draft_value()
+            add_motion_payload(source)
+            project = FakeProject(root, source)
+            cache_root = root / "Cache"
+            asset_path = cache_root / "effect" / "rid-shader" / "md5-shader"
+            asset_path.mkdir(parents=True)
+            (asset_path / "effect.xshader").write_text("shader", encoding="utf-8")
+            plan = final_apply_plan(str(root.resolve()))
+            audio = copy.deepcopy(valid_plan_v20()["groups"][0]["audio"])
+            audio.update({
+                "action": "reuse_existing",
+                "asset_id": "sound-mat",
+                "target_locator": {"timeline": "target", "segment_id": "sound-source"},
+                "target_range": {"start_us": 1_000, "duration_us": 3_000},
+                "text_range": {"start_us": 1_000, "duration_us": 3_000},
+            })
+            plan["groups"][0]["audio"] = audio
+            visual = plan["groups"][0]["visual"][0]
+            visual["duration_us"] = 1_840_000
+            visual["animation"] = {"resource_id": "rid-shader", "duration_us": 1_840_000}
+            plan["groups"][0]["range"] = {"start_us": 1_000_000, "duration_us": 1_840_000}
+            plan["groups"][0]["motion_event"] = {"start_us": 1_000_000, "peak_us": 1_920_000, "end_us": 2_840_000}
+            plan["groups"][0]["motion"] = "reveal"
+            capabilities = {
+                "jianying_version": "11.5.0",
+                "verified": [{"resource_id": "rid-shader", "md5": "md5-shader", "target_kind": "plain_text", "status": "visually_verified"}],
+            }
+            metadata = {"name": "Verified shader", "resource_id": "rid-shader", "effect_id": "sid-shader", "md5": "md5-shader", "duration_us": 2_000_000}
+            temp_root = root / "temp"
+            prepared_path = temp_root / "prepared.json"
+            with (
+                patch.object(draft_apply, "_text_intro_entries", return_value=[metadata]),
+                patch.object(draft_apply, "measure_text_lines", return_value=[{"text": "Synthetic Q", "width_px": 120.0, "height_px": 18.0}]),
+                patch.object(draft_apply, "_font_for_material", return_value=("synthetic.ttf", 18.0, 0.0)),
+                patch.object(draft_apply, "check_sound_operations", wraps=draft_apply.check_sound_operations) as sound_check,
+                patch.object(draft_apply, "build_animation_inventory", wraps=draft_apply.build_animation_inventory) as inventory,
+                patch.object(draft_apply, "transform_packaging_plan", wraps=draft_apply.transform_packaging_plan) as transform,
+                patch.object(draft_apply, "build_html_preview", wraps=draft_apply.build_html_preview) as preview_html,
+            ):
+                prepared, _path, _temp = self.prepare(
+                    plan,
+                    draft_path=directory,
+                    timeline="manual",
+                    editor_root=Path("unused"),
+                    sound_catalog=synthetic_sound_catalog(),
+                    sound_pools=synthetic_sound_pools(),
+                    animation_cache_root=cache_root,
+                    animation_capabilities=capabilities,
+                    animation_version="11.5.0",
+                    existing_audio=[{"id": "voice", "kind": "dialogue", "start_us": 5_000_000, "end_us": 6_000_000}],
+                    project=project,
+                    editor_api=FakeEditorApi,
+                    prepared_path=prepared_path,
+                    temp_root=temp_root,
+                )
+                self.assertTrue(prepared["ok"], prepared)
+                self.assertEqual(sound_check.call_count, 1)
+                self.assertEqual(inventory.call_count, 1)
+                self.assertEqual(transform.call_count, 1)
+                self.assertEqual(preview_html.call_count, 1)
+
+            artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+            plan["review_report"] = {
+                "visual_preview_status": "approved",
+                "visual_preview_sha256": artifact["visual_preview_sha256"],
+            }
+            with (
+                patch.object(draft_apply, "validate_plan", side_effect=AssertionError("plan validator reran")),
+                patch.object(draft_apply, "check_sound_operations", side_effect=AssertionError("sound check reran")),
+                patch.object(draft_apply, "build_animation_inventory", side_effect=AssertionError("animation inventory reran")),
+                patch.object(draft_apply, "transform_packaging_plan", side_effect=AssertionError("transform reran")),
+                patch.object(draft_apply, "build_html_preview", side_effect=AssertionError("preview reran")),
+            ):
+                committed = self.commit(
+                    plan,
+                    prepared_path,
+                    temp_root,
+                    draft_path=directory,
+                    timeline="manual",
+                    editor_root=Path("unused"),
+                    project=project,
+                    editor_api=FakeEditorApi,
+                )
+            self.assertTrue(committed["ok"], committed)
+
+    def test_prepare_path_must_be_inside_temp_before_editor_access(self):
+        prepare = getattr(draft_apply, "prepare_packaging_plan", None)
+        self.assertTrue(callable(prepare))
+        if not callable(prepare):
+            return
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            temp_root = root / "temp"
+            project = FakeProject(root, draft_value())
+            report = prepare(
+                staging_plan(str(root.resolve())),
+                draft_path=directory,
+                timeline="manual",
+                editor_root=Path("unused"),
+                prepared_path=root / "outside.json",
+                sound_catalog={"presets": []},
+                sound_pools={"pools": []},
+                project=project,
+                editor_api=FakeEditorApi,
+                temp_root=temp_root,
+            )
+            self.assertFalse(report["ok"], report)
+            self.assertIn("temp", " ".join(report["input_errors"] + report["errors"]).lower())
+            self.assertEqual(project.resolve_calls, [])
+            self.assertEqual(project.clone_calls, [])
+            self.assertEqual(project.write_calls, [])
+
+    def prepare(self, plan: dict, **kwargs):
         kwargs.pop("apply", None)
-        preview = draft_apply.apply_packaging_plan(plan, apply=False, **kwargs)
+        draft_path = Path(kwargs["draft_path"])
+        temp_root = Path(kwargs.pop("temp_root", draft_path / "temp"))
+        prepared_path = Path(kwargs.pop("prepared_path", temp_root / "prepared.json"))
+        return draft_apply.prepare_packaging_plan(
+            plan, prepared_path=prepared_path, temp_root=temp_root, **kwargs
+        ), prepared_path, temp_root
+
+    def prepare_only(self, plan: dict, **kwargs):
+        return self.prepare(plan, **kwargs)[0]
+
+    def commit(self, plan: dict, prepared_path: Path, temp_root: Path, **kwargs):
+        kwargs.pop("apply", None)
+        kwargs.pop("prepared_path", None)
+        kwargs.pop("temp_root", None)
+        for key in ("sound_catalog", "sound_pools", "animation_cache_root", "animation_capabilities", "animation_version", "existing_audio"):
+            kwargs.pop(key, None)
+        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+        approved_prepared_hash = kwargs.pop(
+            "approved_prepared_hash", prepared.get("prepared_artifact_hash")
+        )
+        return draft_apply.commit_prepared_packaging(
+            plan,
+            prepared,
+            approved_prepared_hash=approved_prepared_hash,
+            prepared_path=prepared_path,
+            temp_root=temp_root,
+            **kwargs,
+        )
+
+    def prepare_and_commit_with_approved_preview(self, plan: dict, **kwargs):
+        preview, prepared_path, temp_root = self.prepare(plan, **kwargs)
         if not preview.get("ok"):
             return preview
         preview_hash = (preview.get("data") or {}).get("visual_preview_sha256")
@@ -35,7 +399,7 @@ class DraftApplyTests(unittest.TestCase):
                 "visual_preview_status": "approved",
                 "visual_preview_sha256": preview_hash,
             }
-        return draft_apply.apply_packaging_plan(plan, apply=True, **kwargs)
+        return self.commit(plan, prepared_path, temp_root, **kwargs)
 
     def test_default_temp_root_is_skill_root_temp(self):
         self.assertEqual(draft_apply._default_temp_root(), Path(__file__).resolve().parents[1] / "temp")
@@ -634,7 +998,7 @@ class DraftApplyTests(unittest.TestCase):
                 }
                 if action != "reuse_existing":
                     audio["source_locator"] = {"timeline": "manual", "segment_id": "sound-source"}
-                plan = {"schema_version": "1.2", "source": {"timeline": "manual"}, "target": {"timeline_name": "packaged"}, "execution": {"mode": "apply", "phase": "staging"}, "groups": [{"id": "g1", "range": {"start_us": 1_000_000, "duration_us": 500_000}, "visual": [], "audio": audio}]}
+                plan = {"schema_version": "2.0", "source": {"timeline": "manual"}, "target": {"timeline_name": "packaged"}, "execution": {"mode": "apply", "phase": "staging"}, "groups": [{"id": "g1", "range": {"start_us": 1_000_000, "duration_us": 500_000}, "visual": [], "audio": audio}]}
 
                 report = draft_apply.transform_packaging_plan(
                     target, plan, source_value=source, timeline_values={"manual": source}
@@ -665,7 +1029,7 @@ class DraftApplyTests(unittest.TestCase):
             "target_locator": {"timeline": "target", "segment_id": "sound-source"},
             "fade_in_us": 1_000, "fade_out_us": 2_000,
         }
-        plan = {"schema_version": "1.2", "source": {"timeline": "manual"},
+        plan = {"schema_version": "2.0", "source": {"timeline": "manual"},
                 "target": {"timeline_name": "packaged"},
                 "execution": {"mode": "apply", "phase": "staging"},
                 "groups": [{"id": "g1", "range": {"start_us": 1_000, "duration_us": 3_000}, "visual": [], "audio": audio}]}
@@ -686,7 +1050,7 @@ class DraftApplyTests(unittest.TestCase):
 
     def test_audio_fade_request_blocks_without_a_verified_fade_prototype(self):
         source = draft_value()
-        plan = {"schema_version": "1.2", "source": {"timeline": "manual"},
+        plan = {"schema_version": "2.0", "source": {"timeline": "manual"},
                 "target": {"timeline_name": "packaged"},
                 "execution": {"mode": "apply", "phase": "staging"},
                 "groups": [{"id": "g1", "range": {"start_us": 1_000, "duration_us": 3_000}, "visual": [],
@@ -703,7 +1067,7 @@ class DraftApplyTests(unittest.TestCase):
     def test_add_audio_asset_from_material_locator_uses_audio_prototype(self):
         source = draft_value()
         plan = {
-            "schema_version": "1.2",
+            "schema_version": "2.0",
             "source": {"timeline": "manual"},
             "target": {"timeline_name": "packaged"},
             "execution": {"mode": "apply", "phase": "final"},
@@ -751,7 +1115,7 @@ class DraftApplyTests(unittest.TestCase):
     def test_new_audio_operation_blocks_locator_for_a_different_timeline(self):
         source = draft_value()
         other = draft_value()
-        plan = {"schema_version": "1.2", "source": {"timeline": "manual"},
+        plan = {"schema_version": "2.0", "source": {"timeline": "manual"},
                 "target": {"timeline_name": "packaged"},
                 "execution": {"mode": "apply", "phase": "staging"},
                 "groups": [{"id": "g1", "range": {"start_us": 1_000, "duration_us": 3_000}, "visual": [],
@@ -807,7 +1171,7 @@ class DraftApplyTests(unittest.TestCase):
     def test_new_audio_asset_requires_resolved_target_range(self):
         source = draft_value()
         plan = {
-            "schema_version": "1.2", "source": {"timeline": "manual"},
+            "schema_version": "2.0", "source": {"timeline": "manual"},
             "target": {"timeline_name": "packaged"},
             "execution": {"mode": "apply", "phase": "final"},
             "groups": [{
@@ -1077,7 +1441,7 @@ class DraftApplyTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(any("segment.global_alpha prototype" in error for error in report["errors"]))
 
-    def test_apply_dry_run_builds_local_animation_inventory_without_writing(self):
+    def test_prepare_builds_local_animation_inventory_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = FakeProject(root, draft_value())
@@ -1100,7 +1464,7 @@ class DraftApplyTests(unittest.TestCase):
             metadata = {"name": "Verified shader", "resource_id": "rid-shader", "effect_id": "sid-shader", "md5": "md5-shader", "duration_us": 2_000_000}
 
             with patch.object(draft_apply, "_text_intro_entries", return_value=[metadata]):
-                report = draft_apply.apply_packaging_plan(
+                report = self.prepare_only(
                     plan,
                     draft_path=directory,
                     timeline="manual",
@@ -1110,7 +1474,7 @@ class DraftApplyTests(unittest.TestCase):
                     animation_cache_root=cache_root,
                     animation_capabilities=capabilities,
                     animation_version="11.5.0",
-                    apply=False,
+
                     project=project,
                     editor_api=FakeEditorApi,
                     temp_root=temp_root,
@@ -1129,7 +1493,7 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(project.clone_calls, [])
             self.assertEqual(project.write_calls, [])
 
-    def test_apply_requires_approved_matching_preview_before_clone(self):
+    def test_commit_requires_approved_matching_preview_and_rejects_plan_drift(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = draft_value()
@@ -1140,16 +1504,17 @@ class DraftApplyTests(unittest.TestCase):
             with patch.object(draft_apply, "measure_text_lines", return_value=[{"text": "Synthetic Q", "width_px": 120.0, "height_px": 18.0}]), patch.object(
                 draft_apply, "_font_for_material", return_value=("synthetic.ttf", 18.0, 0.0)
             ):
-                preview = draft_apply.apply_packaging_plan(
+                preview, prepared_path, temp_root = self.prepare(
                     plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
                     sound_catalog=synthetic_sound_catalog(), sound_pools=synthetic_sound_pools(),
-                    apply=False, project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+                    project=project, editor_api=FakeEditorApi, temp_root=temp_root,
                 )
                 self.assertTrue(preview["ok"], preview)
-                unapproved = draft_apply.apply_packaging_plan(
-                    plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                unapproved = self.commit(
+                    plan, prepared_path, temp_root,
+                    draft_path=directory, timeline="manual", editor_root=Path("unused"),
                     sound_catalog=synthetic_sound_catalog(), sound_pools=synthetic_sound_pools(),
-                    apply=True, project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+                    project=project, editor_api=FakeEditorApi,
                 )
                 self.assertFalse(unapproved["ok"])
                 self.assertTrue(any("must be approved" in error for error in unapproved["errors"]))
@@ -1161,18 +1526,20 @@ class DraftApplyTests(unittest.TestCase):
                 position = plan["groups"][0]["visual"][0]["overrides"]["position_y"]
                 original_y = position["value"]
                 position["value"] = original_y + 0.01
-                rejected = draft_apply.apply_packaging_plan(
-                    plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                rejected = self.commit(
+                    plan, prepared_path, temp_root,
+                    draft_path=directory, timeline="manual", editor_root=Path("unused"),
                     sound_catalog=synthetic_sound_catalog(), sound_pools=synthetic_sound_pools(),
-                    apply=True, project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+                    project=project, editor_api=FakeEditorApi,
                 )
                 self.assertFalse(rejected["ok"])
-                self.assertTrue(any("preview hash" in error for error in rejected["errors"]))
+                self.assertTrue(any("stale_preparation" in error for error in rejected["errors"]))
                 position["value"] = original_y
-                applied = draft_apply.apply_packaging_plan(
-                    plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
+                applied = self.commit(
+                    plan, prepared_path, temp_root,
+                    draft_path=directory, timeline="manual", editor_root=Path("unused"),
                     sound_catalog=synthetic_sound_catalog(), sound_pools=synthetic_sound_pools(),
-                    apply=True, project=project, editor_api=FakeEditorApi, temp_root=temp_root,
+                    project=project, editor_api=FakeEditorApi,
                 )
 
             self.assertTrue(applied["ok"], applied)
@@ -1180,29 +1547,29 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(len(project.clone_calls), 1)
             self.assertEqual(applied["data"]["human_visual_audio_review"], "pending")
 
-    def test_dry_run_does_not_clone_or_write(self):
+    def test_prepare_does_not_clone_or_write(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value())
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=False,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
 
             self.assertTrue(report["ok"], report)
-            self.assertTrue(report["data"]["dry_run"])
+            self.assertEqual(report["data"]["prepared_schema_version"], "2.0")
             self.assertEqual(project.clone_calls, [])
             self.assertEqual(project.write_calls, [])
 
-    def test_dry_run_warns_on_associated_backup_drift_and_uses_primary(self):
+    def test_prepare_warns_on_associated_backup_drift_and_uses_primary(self):
         with tempfile.TemporaryDirectory() as directory:
             backup = str(Path(directory) / "T1" / "draft_content.json.bak")
             project = FakeProject(
@@ -1211,14 +1578,14 @@ class DraftApplyTests(unittest.TestCase):
             )
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=False,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1229,21 +1596,21 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(project.write_calls, [])
             self.assertEqual(project.clone_calls, [])
 
-    def test_apply_writes_only_a_clone_and_reports_backup(self):
+    def test_commit_writes_only_a_clone_and_reports_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             project = FakeProject(Path(directory), source)
             before = copy.deepcopy(source)
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1257,21 +1624,21 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(report["data"]["phase_state"]["packaging_staging"], "reviewing")
             self.assertIn("review", report["data"]["next_step"].lower())
 
-    def test_apply_blocks_before_candidate_write_when_clone_backup_is_unusable(self):
+    def test_commit_blocks_before_candidate_write_when_clone_backup_is_unusable(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             missing_backup = str(Path(directory) / "missing-clone-backup")
             project = FakeProject(Path(directory), source, clone_backup=missing_backup)
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1280,7 +1647,7 @@ class DraftApplyTests(unittest.TestCase):
             self.assertTrue(any("clone backup" in error for error in report["input_errors"]), report)
             self.assertEqual(project.write_calls, [])
 
-    def test_apply_blocks_before_candidate_write_when_clone_backup_manifest_is_empty(self):
+    def test_commit_blocks_before_candidate_write_when_clone_backup_manifest_is_empty(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             project = FakeProject(Path(directory), source)
@@ -1290,14 +1657,14 @@ class DraftApplyTests(unittest.TestCase):
             }), encoding="utf-8")
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1306,21 +1673,21 @@ class DraftApplyTests(unittest.TestCase):
             self.assertTrue(any("project index" in error or "no files" in error for error in report["input_errors"]), report)
             self.assertEqual(project.write_calls, [])
 
-    def test_apply_blocks_before_candidate_write_when_clone_backup_file_hash_mismatches(self):
+    def test_commit_blocks_before_candidate_write_when_clone_backup_file_hash_mismatches(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             project = FakeProject(Path(directory), source)
             (project.clone_backup / "project.json").write_text("tampered", encoding="utf-8")
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1329,7 +1696,7 @@ class DraftApplyTests(unittest.TestCase):
             self.assertTrue(any("hash" in error for error in report["input_errors"]), report)
             self.assertEqual(project.write_calls, [])
 
-    def test_apply_blocks_when_clone_backup_is_not_the_preclone_project_index(self):
+    def test_commit_blocks_when_clone_backup_is_not_the_preclone_project_index(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             project = FakeProject(Path(directory), source)
@@ -1342,14 +1709,14 @@ class DraftApplyTests(unittest.TestCase):
             }), encoding="utf-8")
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1358,7 +1725,7 @@ class DraftApplyTests(unittest.TestCase):
             self.assertTrue(any("pre-clone" in error for error in report["input_errors"]), report)
             self.assertEqual(project.write_calls, [])
 
-    def test_apply_blocks_source_validation_false_without_structured_errors(self):
+    def test_prepare_blocks_source_validation_false_without_structured_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value())
             project.validate = lambda selector: {
@@ -1369,14 +1736,14 @@ class DraftApplyTests(unittest.TestCase):
             }
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=False,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1384,20 +1751,20 @@ class DraftApplyTests(unittest.TestCase):
             self.assertFalse(report["ok"], report)
             self.assertTrue(any("without structured errors" in error for error in report["errors"]), report)
 
-    def test_apply_blocks_candidate_validation_false_without_structured_errors(self):
+    def test_prepare_blocks_candidate_validation_false_without_structured_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value())
             editor_api = SimpleNamespace(validate_content=lambda *_args, **_kwargs: {"ok": False})
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=False,
+
                 project=project,
                 editor_api=editor_api,
             )
@@ -1415,14 +1782,14 @@ class DraftApplyTests(unittest.TestCase):
             project._assert_editor_closed = lambda: None
             plan = staging_plan(str(root.resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=str(root),
                 timeline="manual",
                 editor_root=Path(r"C:\Users\11\.agents\skills\jianying-editor-skill"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=api,
             )
@@ -1448,14 +1815,14 @@ class DraftApplyTests(unittest.TestCase):
             project._assert_editor_closed = lambda: None
             plan = final_apply_plan(str(root.resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=str(root),
                 timeline="manual",
                 editor_root=Path(r"C:\Users\11\.agents\skills\jianying-editor-skill"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=api,
             )
@@ -1473,7 +1840,7 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(overlay_material["transform"]["y"], -0.44)
             self.assertTrue(report["data"]["readback_matches_plan"])
 
-    def test_final_apply_resolves_layout_and_writes_approved_clone(self):
+    def test_commit_resolves_layout_and_writes_approved_clone(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             add_motion_payload(source)
@@ -1481,14 +1848,14 @@ class DraftApplyTests(unittest.TestCase):
             before = copy.deepcopy(source)
             plan = final_apply_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1508,14 +1875,14 @@ class DraftApplyTests(unittest.TestCase):
             project._assert_editor_closed = lambda: warning
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1533,14 +1900,14 @@ class DraftApplyTests(unittest.TestCase):
             project.clone_timeline = lambda *_args, **_kwargs: {"ok": False, "error": "injected clone failure"}
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1563,14 +1930,14 @@ class DraftApplyTests(unittest.TestCase):
             project.clone_timeline = raise_clone
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1579,7 +1946,7 @@ class DraftApplyTests(unittest.TestCase):
             self.assertIn(warning, report["warnings"])
             self.assertTrue(any("injected clone exception" in error for error in report["input_errors"]))
 
-    def test_apply_failure_leaves_source_and_new_clone_at_prewrite_state(self):
+    def test_commit_failure_leaves_source_and_new_clone_at_prewrite_state(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             project = FakeProject(Path(directory), source, fail_write=True)
@@ -1588,14 +1955,14 @@ class DraftApplyTests(unittest.TestCase):
             before = copy.deepcopy(source)
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1604,18 +1971,20 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(source, before)
             self.assertEqual(project.values["T2"]["tracks"], source["tracks"])
             self.assertTrue(any("injected write failure" in error for error in report["errors"]))
+            self.assertTrue(any("target rollback also failed" in error for error in report["errors"]))
+            self.assertFalse(report["data"]["target_clone_preserved"])
             self.assertIn(warning, report["warnings"])
 
-    def test_readback_decode_failure_restores_clone_without_decoding_first(self):
+    def test_commit_readback_decode_failure_restores_clone_without_decoding_first(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value(), fail_decode_while_target_is_modified=True)
             warning = "Jianying is running; closing is recommended."
             project._assert_editor_closed = lambda: warning
             plan = staging_plan(str(Path(directory).resolve()))
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan, draft_path=directory, timeline="manual", editor_root=Path("unused"),
-                sound_catalog={"presets": []}, sound_pools={"pools": []}, apply=True,
+                sound_catalog={"presets": []}, sound_pools={"pools": []},
                 project=project, editor_api=FakeEditorApi,
             )
 
@@ -1626,20 +1995,20 @@ class DraftApplyTests(unittest.TestCase):
             self.assertGreaterEqual(project.validate_calls.count("T2"), 1)
             self.assertIn(warning, report["warnings"])
 
-    def test_apply_gate_blocks_before_editor_access(self):
+    def test_prepare_gate_blocks_before_editor_access(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value())
             plan = staging_plan(str(Path(directory).resolve()))
             plan["source"]["content_pass"] = "stable"
 
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1651,24 +2020,24 @@ class DraftApplyTests(unittest.TestCase):
     def test_missing_editor_api_blocks_without_direct_write_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = staging_plan(str(Path(directory).resolve()))
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path(directory),
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
-                apply=True,
+
             )
 
         self.assertFalse(report["ok"])
         self.assertTrue(any("jianying-editor CLI not found" in error for error in report["input_errors"]))
 
-    def test_sound_apply_requires_dialogue_evidence_before_clone(self):
+    def test_prepare_sound_requires_dialogue_evidence_before_commit(self):
         with tempfile.TemporaryDirectory() as directory:
             project = FakeProject(Path(directory), draft_value())
             plan = final_apply_plan(str(Path(directory).resolve()))
-            audio = copy.deepcopy(valid_plan_v12()["groups"][0]["audio"])
+            audio = copy.deepcopy(valid_plan_v20()["groups"][0]["audio"])
             audio.update({
                 "action": "reuse_existing",
                 "asset_id": "sound-mat",
@@ -1678,14 +2047,14 @@ class DraftApplyTests(unittest.TestCase):
             })
             plan["groups"][0]["audio"] = audio
 
-            report = draft_apply.apply_packaging_plan(
+            report = self.prepare_only(
                 plan,
                 draft_path=directory,
                 timeline="manual",
                 editor_root=Path("unused"),
                 sound_catalog=synthetic_sound_catalog(),
                 sound_pools=synthetic_sound_pools(),
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1694,13 +2063,13 @@ class DraftApplyTests(unittest.TestCase):
             self.assertEqual(project.clone_calls, [])
             self.assertTrue(any("dialogue evidence" in error for error in report["errors"]))
 
-    def test_sound_apply_accepts_explicit_non_overlapping_dialogue_evidence(self):
+    def test_commit_accepts_explicit_non_overlapping_dialogue_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             source = draft_value()
             add_motion_payload(source)
             project = FakeProject(Path(directory), source)
             plan = final_apply_plan(str(Path(directory).resolve()))
-            audio = copy.deepcopy(valid_plan_v12()["groups"][0]["audio"])
+            audio = copy.deepcopy(valid_plan_v20()["groups"][0]["audio"])
             audio.update({
                 "action": "reuse_existing",
                 "asset_id": "sound-mat",
@@ -1710,7 +2079,7 @@ class DraftApplyTests(unittest.TestCase):
             })
             plan["groups"][0]["audio"] = audio
 
-            report = self.apply_with_approved_preview(
+            report = self.prepare_and_commit_with_approved_preview(
                 plan,
                 draft_path=directory,
                 timeline="manual",
@@ -1718,7 +2087,7 @@ class DraftApplyTests(unittest.TestCase):
                 sound_catalog=synthetic_sound_catalog(),
                 sound_pools=synthetic_sound_pools(),
                 existing_audio=[{"id": "voice", "kind": "dialogue", "start_us": 5_000_000, "end_us": 6_000_000}],
-                apply=True,
+
                 project=project,
                 editor_api=FakeEditorApi,
             )
@@ -1726,27 +2095,55 @@ class DraftApplyTests(unittest.TestCase):
             self.assertTrue(report["ok"], report)
             self.assertEqual(project.clone_calls, [("T1", "packaged-final")])
 
-    def test_cli_apply_defaults_to_dry_run(self):
-        with tempfile.TemporaryDirectory() as directory:
-            project = FakeProject(Path(directory), draft_value())
-            plan_path = Path(directory) / "plan.json"
-            plan_path.write_text(json.dumps(staging_plan(str(Path(directory).resolve()))), encoding="utf-8")
+    def test_cli_prepare_persists_artifact_without_writing_draft(self):
+        skill_temp = Path(__file__).resolve().parents[1] / "temp"
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory(dir=skill_temp) as artifact_dir:
+            root = Path(directory)
+            project = FakeProject(root, draft_value())
+            plan_path = root / "plan.json"
+            prepared_path = Path(artifact_dir) / "prepared.json"
+            plan = staging_plan(str(root.resolve()))
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
             editor_api = SimpleNamespace(JianyingProject=lambda _root: project, validate_content=FakeEditorApi.validate_content)
             stdout = io.StringIO()
             with patch.object(draft_apply, "_load_editor_api", return_value=editor_api):
                 with contextlib.redirect_stdout(stdout):
                     code = packaging_main([
-                        "apply",
+                        "prepare",
                         "--draft", directory,
                         "--timeline", "manual",
                         "--plan", str(plan_path),
+                        "--prepared", str(prepared_path),
+                        "--editor-root", "unused",
+                    ])
+                prepared_report = json.loads(stdout.getvalue())
+                self.assertEqual(code, 0, prepared_report)
+                self.assertTrue(prepared_path.is_file())
+                self.assertEqual(project.clone_calls, [])
+                prepared_artifact = json.loads(prepared_path.read_text(encoding="utf-8"))
+                if prepared_artifact.get("visual_preview_sha256"):
+                    plan["review_report"] = {
+                        "visual_preview_status": "approved",
+                        "visual_preview_sha256": prepared_artifact["visual_preview_sha256"],
+                    }
+                    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    code = packaging_main([
+                        "commit",
+                        "--draft", str(root),
+                        "--timeline", "manual",
+                        "--plan", str(plan_path),
+                        "--prepared", str(prepared_path),
+                        "--approved-prepared-hash", prepared_report["data"]["prepared_artifact_hash"],
+                        "--editor-root", "unused",
                     ])
 
             report = json.loads(stdout.getvalue())
             self.assertEqual(code, 0, report)
-            self.assertTrue(report["data"]["dry_run"])
-            self.assertEqual(project.clone_calls, [])
-            self.assertEqual(project.write_calls, [])
+            self.assertEqual(json.loads(prepared_path.read_text(encoding="utf-8"))["prepared_schema_version"], "2.0")
+            self.assertEqual(project.clone_calls, [("T1", "packaged")])
+            self.assertEqual(project.write_calls, ["T2"])
 
 
 def text_hash(text: str) -> str:
@@ -1827,7 +2224,7 @@ def add_motion_payload(value: dict) -> None:
 
 def plan_for_visual(visual: dict) -> dict:
     return {
-        "schema_version": "1.2",
+        "schema_version": "2.0",
         "source": {"timeline": "manual"},
         "target": {"timeline_name": "packaged", "clone_source": True},
         "execution": {"mode": "apply", "phase": "staging"},
@@ -1902,7 +2299,7 @@ def read_text(value: dict, segment: dict) -> str:
 
 
 def staging_plan(draft_path: str) -> dict:
-    plan = valid_plan_v12()
+    plan = valid_plan_v20()
     plan["source"]["draft_path"] = draft_path
     plan["execution"].update(mode="apply", phase="staging")
     plan["target"]["timeline_name"] = "packaged"
@@ -1922,7 +2319,7 @@ def staging_plan(draft_path: str) -> dict:
 
 
 def final_apply_plan(draft_path: str) -> dict:
-    plan = valid_plan_v12()
+    plan = valid_plan_v20()
     plan["source"]["draft_path"] = draft_path
     plan["source"]["timeline"] = "manual"
     plan["execution"].update(mode="apply", phase="final")

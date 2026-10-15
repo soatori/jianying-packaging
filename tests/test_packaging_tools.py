@@ -9,7 +9,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
@@ -25,17 +24,162 @@ from packaging_tools.text_ops import check_text_replacement
 from packaging_tools.verification import verify_packaging_result
 from packaging_tools.validators.generic_content import check_generic_content
 from packaging_tool import _parser as packaging_parser
-from packaging_tool import _preflight
 from packaging_tool import main as packaging_main
 
 
 class PackagingToolTests(unittest.TestCase):
-    def test_cli_exposes_dry_run_packaging_apply_command(self):
+    def test_cli_exposes_prepare_commit_and_removes_legacy_commands(self):
         choices = packaging_parser()._subparsers._group_actions[0].choices
-        self.assertIn("apply", choices)
-        action = choices["apply"]
-        for option in ("--draft", "--timeline", "--plan", "--apply", "--existing-audio", "--animation-cache-root", "--animation-capabilities", "--animation-version"):
-            self.assertIn(option, action._option_string_actions)
+        self.assertIn("prepare", choices)
+        self.assertIn("commit", choices)
+        self.assertNotIn("apply", choices)
+        self.assertNotIn("preflight", choices)
+        prepare = choices["prepare"]
+        for option in ("--draft", "--timeline", "--plan", "--prepared", "--catalog", "--pools", "--existing-audio"):
+            self.assertIn(option, prepare._option_string_actions)
+        self.assertTrue(choices["commit"]._option_string_actions["--approved-prepared-hash"].required)
+        self.assertNotIn("--apply", choices["commit"]._option_string_actions)
+
+    def test_prepare_rejects_output_path_that_would_overwrite_plan(self):
+        temp_root = Path(__file__).resolve().parents[1] / "temp"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        plan_path = temp_root / "prepare-collision-plan.json"
+        original = '{"keep": true}'
+        plan_path.write_text(original, encoding="utf-8")
+        output = io.StringIO()
+        try:
+            def fake_prepare(_plan, **kwargs):
+                Path(kwargs["prepared_path"]).write_text('{"prepared": true}', encoding="utf-8")
+                return {"ok": True, "data": {}, "errors": [], "input_errors": [], "warnings": []}
+
+            with patch("packaging_tool.prepare_packaging_plan", side_effect=fake_prepare) as prepare:
+                with contextlib.redirect_stdout(output):
+                    code = packaging_main([
+                        "prepare", "--draft", "unused", "--timeline", "manual",
+                        "--plan", str(plan_path), "--prepared", str(plan_path),
+                    ])
+            report = json.loads(output.getvalue())
+            self.assertNotEqual(code, 0)
+            self.assertTrue(any("conflicts with input" in error for error in report["input_errors"]), report)
+            prepare.assert_not_called()
+            self.assertEqual(plan_path.read_text(encoding="utf-8"), original)
+        finally:
+            plan_path.unlink(missing_ok=True)
+
+    def test_prepare_rejects_report_output_path_that_would_overwrite_input_or_artifact(self):
+        temp_root = Path(__file__).resolve().parents[1] / "temp"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        plan_path = temp_root / "prepare-report-collision-plan.json"
+        prepared_path = temp_root / "prepare-report-collision-artifact.json"
+        original = '{"keep": true}'
+        prepared_original = '{"prepared": "keep"}'
+        plan_path.write_text(original, encoding="utf-8")
+        prepared_path.write_text(prepared_original, encoding="utf-8")
+        try:
+            for output_path in (plan_path, prepared_path):
+                with self.subTest(output_path=output_path.name):
+                    output = io.StringIO()
+                    with patch(
+                        "packaging_tool.prepare_packaging_plan",
+                        return_value={"ok": True, "data": {}, "errors": [], "input_errors": [], "warnings": []},
+                    ) as prepare:
+                        with contextlib.redirect_stdout(output):
+                            code = packaging_main([
+                                "prepare", "--draft", "unused", "--timeline", "manual",
+                                "--plan", str(plan_path), "--prepared", str(prepared_path),
+                                "--out", str(output_path),
+                            ])
+                    report = json.loads(output.getvalue())
+                    self.assertNotEqual(code, 0)
+                    self.assertTrue(any("report output path conflicts" in error for error in report["input_errors"]), report)
+                    prepare.assert_not_called()
+                    self.assertEqual(plan_path.read_text(encoding="utf-8"), original)
+                    self.assertEqual(prepared_path.read_text(encoding="utf-8"), prepared_original)
+        finally:
+            plan_path.unlink(missing_ok=True)
+            prepared_path.unlink(missing_ok=True)
+
+    def test_prepare_rejects_prepared_or_report_output_inside_draft(self):
+        temp_root = Path(__file__).resolve().parents[1] / "temp"
+        draft_root = temp_root / "prepare-output-draft-guard"
+        draft_root.mkdir(parents=True, exist_ok=True)
+        plan_path = temp_root / "prepare-output-draft-plan.json"
+        prepared_path = temp_root / "prepare-output-draft-artifact.json"
+        draft_file = draft_root / "draft_content.json"
+        original_plan = '{"keep_plan": true}'
+        original_draft = '{"keep_draft": true}'
+        plan_path.write_text(original_plan, encoding="utf-8")
+        draft_file.write_text(original_draft, encoding="utf-8")
+        try:
+            for output_kind in ("prepared", "report"):
+                with self.subTest(output_kind=output_kind):
+                    output = io.StringIO()
+                    argv = [
+                        "prepare", "--draft", str(draft_root), "--timeline", "manual",
+                        "--plan", str(plan_path), "--prepared",
+                        str(draft_file if output_kind == "prepared" else prepared_path),
+                    ]
+                    if output_kind == "report":
+                        argv.extend(["--out", str(draft_file)])
+                    with patch(
+                        "packaging_tool.prepare_packaging_plan",
+                        return_value={"ok": True, "data": {}, "errors": [], "input_errors": [], "warnings": []},
+                    ) as prepare:
+                        with contextlib.redirect_stdout(output):
+                            code = packaging_main(argv)
+                    report = json.loads(output.getvalue())
+                    self.assertNotEqual(code, 0)
+                    self.assertTrue(any("inside draft root" in error for error in report["input_errors"]), report)
+                    prepare.assert_not_called()
+                    self.assertEqual(plan_path.read_text(encoding="utf-8"), original_plan)
+                    self.assertEqual(draft_file.read_text(encoding="utf-8"), original_draft)
+                    self.assertFalse(prepared_path.exists())
+        finally:
+            plan_path.unlink(missing_ok=True)
+            prepared_path.unlink(missing_ok=True)
+            draft_file.unlink(missing_ok=True)
+            draft_root.rmdir()
+
+    def test_commit_rejects_report_output_that_would_overwrite_inputs_or_draft(self):
+        temp_root = Path(__file__).resolve().parents[1] / "temp"
+        draft_root = temp_root / "commit-output-draft-guard"
+        draft_root.mkdir(parents=True, exist_ok=True)
+        plan_path = temp_root / "commit-output-plan.json"
+        prepared_path = temp_root / "commit-output-prepared.json"
+        draft_file = draft_root / "draft_content.json"
+        originals = {
+            plan_path: '{"keep_plan": true}',
+            prepared_path: '{"keep_prepared": true}',
+            draft_file: '{"keep_draft": true}',
+        }
+        for path, contents in originals.items():
+            path.write_text(contents, encoding="utf-8")
+        try:
+            for output_path in (draft_file, plan_path, prepared_path):
+                with self.subTest(output_path=output_path.name):
+                    output = io.StringIO()
+                    with patch(
+                        "packaging_tool.commit_prepared_packaging",
+                        return_value={"ok": True, "data": {}, "errors": [], "input_errors": [], "warnings": []},
+                    ) as commit:
+                        with contextlib.redirect_stdout(output):
+                            code = packaging_main([
+                                "commit", "--draft", str(draft_root), "--timeline", "manual",
+                                "--plan", str(plan_path), "--prepared", str(prepared_path),
+                                "--approved-prepared-hash", "sha256:approved",
+                                "--out", str(output_path),
+                            ])
+                    report = json.loads(output.getvalue())
+                    self.assertNotEqual(code, 0)
+                    self.assertTrue(report["input_errors"], report)
+                    commit.assert_not_called()
+                    for path, contents in originals.items():
+                        self.assertEqual(path.read_text(encoding="utf-8"), contents)
+        finally:
+            plan_path.unlink(missing_ok=True)
+            prepared_path.unlink(missing_ok=True)
+            draft_file.unlink(missing_ok=True)
+            draft_root.rmdir()
 
     def test_draft_apply_adapter_module_is_available(self):
         self.assertIsNotNone(importlib.util.find_spec("packaging_tools.draft_apply"))
@@ -161,173 +305,6 @@ class PackagingToolTests(unittest.TestCase):
     def test_cli_uses_json_by_default_and_returns_success(self):
         registry = Path(__file__).resolve().parents[1] / "references" / "layout-template-registry.json"
         self.assertEqual(packaging_main(["validate", "layout", str(registry)]), 0)
-
-    def test_preflight_warns_on_associated_backup_drift(self):
-        backup = r"C:\draft\Timelines\T1\draft_content.json.bak"
-        manifest = {
-            "replicas": [
-                {"path": r"C:\draft\Timelines\T1\draft_content.json", "role": "primary", "primary": True, "associated": True},
-                {"path": backup, "role": "writable-backup", "primary": False, "associated": True},
-                {"path": r"C:\draft\Timelines\T1\template-2.tmp", "role": "writable-template", "primary": False, "associated": True},
-            ],
-            "errors": [],
-        }
-        calls = [
-            {"command": ["probe"], "result": {"ok": True}},
-            {"command": ["inspect"], "result": {"ok": True, "replica_manifest": manifest}},
-            {"command": ["validate"], "result": {"ok": False, "errors": [f"Replica differs from primary: {backup}"], "replica_manifest": manifest}},
-        ]
-
-        with tempfile.TemporaryDirectory() as directory:
-            draft = Path(directory) / "draft"
-            draft.mkdir()
-            with patch("packaging_tool._run_editor_readonly", side_effect=calls):
-                report = _preflight(SimpleNamespace(draft=str(draft), timeline="T1", editor_root=None))
-
-        self.assertTrue(report["ok"], report)
-        self.assertEqual(report["errors"], [])
-        self.assertEqual(report["warnings"], [f"Replica differs from primary: {backup}"])
-
-    def test_preflight_classifies_nonzero_editor_json_before_returncode(self):
-        backup = r"C:\draft\Timelines\T1\draft_content.json.bak"
-        manifest = {
-            "replicas": [
-                {"path": r"C:\draft\Timelines\T1\draft_content.json", "role": "primary", "primary": True, "associated": True},
-                {"path": backup, "role": "writable-backup", "primary": False, "associated": True},
-            ],
-            "errors": [],
-        }
-        payloads = {
-            "probe": {"ok": True},
-            "inspect": {"ok": True, "replica_manifest": manifest},
-            "validate": {
-                "ok": False,
-                "errors": [f"Replica differs from primary: {backup}"],
-                "replica_manifest": manifest,
-            },
-        }
-
-        def run(command, **_kwargs):
-            name = command[2]
-            payload = payloads[name]
-            return SimpleNamespace(
-                returncode=1 if name == "validate" else 0,
-                stdout=json.dumps(payload),
-                stderr="validation returned a structured failure",
-            )
-
-        with tempfile.TemporaryDirectory() as directory:
-            draft = Path(directory) / "draft"
-            draft.mkdir()
-            with patch("packaging_tool.subprocess.run", side_effect=run):
-                report = _preflight(SimpleNamespace(
-                    draft=str(draft),
-                    timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
-                ))
-
-        self.assertTrue(report["ok"], report)
-        self.assertEqual(report["errors"], [])
-        self.assertEqual(report["warnings"], [f"Replica differs from primary: {backup}"])
-        self.assertEqual(report["data"]["editor_readonly_calls"][-1]["returncode"], 1)
-
-    def test_preflight_keeps_nonzero_structured_validation_errors_blocking(self):
-        payloads = {
-            "probe": {"ok": True},
-            "inspect": {"ok": True},
-            "validate": {"ok": False, "errors": ["draft content is invalid"]},
-        }
-
-        def run(command, **_kwargs):
-            return SimpleNamespace(
-                returncode=1 if command[2] == "validate" else 0,
-                stdout=json.dumps(payloads[command[2]]),
-                stderr="validation failed",
-            )
-
-        with tempfile.TemporaryDirectory() as directory:
-            draft = Path(directory) / "draft"
-            draft.mkdir()
-            with patch("packaging_tool.subprocess.run", side_effect=run):
-                report = _preflight(SimpleNamespace(
-                    draft=str(draft),
-                    timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
-                ))
-
-        self.assertFalse(report["ok"], report)
-        self.assertEqual(report["errors"], ["draft content is invalid"])
-
-    def test_preflight_blocks_structured_errors_without_ok_flag(self):
-        payloads = {
-            "probe": {"ok": True},
-            "inspect": {"ok": True},
-            "validate": {"errors": ["draft content is invalid"]},
-        }
-
-        def run(command, **_kwargs):
-            return SimpleNamespace(
-                returncode=1 if command[2] == "validate" else 0,
-                stdout=json.dumps(payloads[command[2]]),
-                stderr="validation failed",
-            )
-
-        with tempfile.TemporaryDirectory() as directory:
-            draft = Path(directory) / "draft"
-            draft.mkdir()
-            with patch("packaging_tool.subprocess.run", side_effect=run):
-                report = _preflight(SimpleNamespace(
-                    draft=str(draft),
-                    timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
-                ))
-
-        self.assertFalse(report["ok"], report)
-        self.assertEqual(report["errors"], ["draft content is invalid"])
-
-    def test_preflight_blocks_ok_false_without_structured_errors(self):
-        payloads = {
-            "probe": {"ok": True},
-            "inspect": {"ok": True},
-            "validate": {"ok": False},
-        }
-
-        def run(command, **_kwargs):
-            return SimpleNamespace(
-                returncode=1 if command[2] == "validate" else 0,
-                stdout=json.dumps(payloads[command[2]]),
-                stderr="validation failed without details",
-            )
-
-        with tempfile.TemporaryDirectory() as directory:
-            draft = Path(directory) / "draft"
-            draft.mkdir()
-            with patch("packaging_tool.subprocess.run", side_effect=run):
-                report = _preflight(SimpleNamespace(
-                    draft=str(draft),
-                    timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
-                ))
-
-        self.assertFalse(report["ok"], report)
-        self.assertTrue(any("without structured errors" in error for error in report["errors"]), report)
-
-    def test_preflight_blocks_when_nonzero_editor_output_is_not_json(self):
-        def run(_command, **_kwargs):
-            return SimpleNamespace(returncode=1, stdout="not json", stderr="editor crashed")
-
-        with tempfile.TemporaryDirectory() as directory:
-            draft = Path(directory) / "draft"
-            draft.mkdir()
-            with patch("packaging_tool.subprocess.run", side_effect=run):
-                report = _preflight(SimpleNamespace(
-                    draft=str(draft),
-                    timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
-                ))
-
-        self.assertFalse(report["ok"], report)
-        self.assertTrue(any("editor crashed" in error for error in report["errors"]))
 
     def test_canonical_visual_hash_and_legacy_alias_conflict_are_fail_closed(self):
         text = "规范文本"

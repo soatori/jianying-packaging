@@ -24,7 +24,7 @@ Use this reference to decide whether an operation is supported by the current Ji
 
 Confirm support separately for text/style mirrors, coordinate conversion, layer ordering, visibility, animation materials, sound placement/cropping/volume, transitions, masks, and other effect fields. Do not infer that support for one object type or one version transfers to another.
 
-For raw properties, prefer cloning a working segment and its referenced materials, replacing exact IDs, and changing only approved fields. Keep unknown fields intact. The schema 1.2 packaging adapter performs plan translation and calls the existing `jianying-editor` transaction APIs for backups, write-back, replica validation, read-back, and rollback. Unknown field mappings remain blocked pending a same-version prototype.
+For raw properties, prefer cloning a working segment and its referenced materials, replacing exact IDs, and changing only approved fields. Keep unknown fields intact. The schema 2.0 adapter performs candidate preparation and uses the existing `jianying-editor` transaction APIs at commit for backups, write-back, replica validation, read-back, and rollback. Unknown field mappings remain blocked pending a same-version prototype.
 
 ## Animation resources
 
@@ -44,14 +44,14 @@ resource also needs same-version evidence before it is treated as compatible.
 The generated HTML and successful JSON read-back do not prove that Jianying
 retains the effect after reopening.
 
-The plan, apply report, and candidate material must use one microsecond
+The plan, prepared report, and candidate material must use one microsecond
 duration: `min(preset_default_duration_us, visible_text_row_duration_us)`.
 Write the exact inventory cache subdirectory to the animation payload. Clamp
 before writing, not after the UI has cropped the animation.
 
 ## Replica roles and transparency
 
-During read-only checks and apply dry-run, only a mismatch for a positively
+During prepare and commit source checks, only a mismatch for a positively
 associated `writable-backup` is a warning. Primary/template mismatch and
 missing, unreadable, or unassociated replica candidates block. Post-write
 validation remains strict across the transaction-managed target replicas.

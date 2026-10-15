@@ -225,5 +225,5 @@ def check_sound_operations(plan: Any, catalog: Any, pools: Any, existing_audio: 
             elif abs(span[0] - start) <= 40000 and span[1] > start:
                 warnings.append(f"group {group.get('id')}: existing audio event is within 40ms of the motion start ({item.get('id')})")
     if final_or_apply and active_audio_groups and not dialogue_evidence_present:
-        errors.append("dialogue evidence is required for final/apply sound collision checks")
+        errors.append("dialogue evidence is required for final sound preparation")
     return result("packaging_sound_check", data={"checks": checks}, errors=errors, warnings=warnings, summary={"checked_groups": len(checks)})

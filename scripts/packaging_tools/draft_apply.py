@@ -1,4 +1,4 @@
-"""Schema 1.2 packaging-plan adapter for existing Jianying drafts."""
+"""Schema 2.0 packaging-plan adapter for existing Jianying drafts."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def _text_intro_entries() -> list[Any]:
     try:
         from pyJianYingDraft import TextIntro
     except ImportError as exc:
-        raise DraftApplyError("pyJianYingDraft.TextIntro is unavailable; animation apply is blocked") from exc
+        raise DraftApplyError("pyJianYingDraft.TextIntro is unavailable; animation preparation is blocked") from exc
     return list(TextIntro)
 
 
@@ -1421,8 +1421,8 @@ def transform_packaging_plan(
 
     if not isinstance(target_value, dict) or not isinstance(plan, dict):
         return result("packaging_draft_transform", input_errors=["target_value and plan must be JSON objects"])
-    if plan.get("schema_version") != "1.2":
-        return result("packaging_draft_transform", errors=["only schema_version 1.2 can be applied"])
+    if plan.get("schema_version") != "2.0":
+        return result("packaging_draft_transform", errors=["only schema_version 2.0 can be transformed"])
     execution = plan.get("execution") if isinstance(plan.get("execution"), dict) else {}
     phase = execution.get("phase")
     if execution.get("mode") != "apply" or phase not in {"staging", "final"}:
@@ -1910,46 +1910,165 @@ def _validate_clone_backup(
     return str(backup_path)
 
 
-def apply_packaging_plan(
+def resolve_prepared_path(value: str | Path, temp_root: str | Path | None = None) -> Path:
+    root = Path(temp_root).resolve() if temp_root is not None else _default_temp_root().resolve()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise DraftApplyError(f"--prepared must be inside temp: {root}") from exc
+    if not relative.parts or (path.exists() and path.is_dir()):
+        raise DraftApplyError("--prepared must name a file inside temp")
+    return path
+
+
+def _write_prepared(path: Path, prepared: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temp_path.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(prepared, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _prepared_plan_hash(plan: dict[str, Any]) -> str:
+    planned = copy.deepcopy(plan)
+    review = planned.get("review_report")
+    if isinstance(review, dict):
+        review.pop("visual_preview_status", None)
+        review.pop("visual_preview_sha256", None)
+        if not review:
+            planned.pop("review_report", None)
+    return _hash_value(planned)
+
+
+def _prepared_artifact_hash(prepared: dict[str, Any]) -> str:
+    snapshot = copy.deepcopy(prepared)
+    snapshot.pop("prepared_artifact_hash", None)
+    return _hash_value(snapshot)
+
+
+def _source_snapshot(value: dict[str, Any]) -> dict[str, Any]:
+    materials = value.get("materials") if isinstance(value.get("materials"), dict) else {}
+    material_transforms = {
+        str(material.get("id")): copy.deepcopy(material.get("transform"))
+        for bucket in materials.values()
+        if isinstance(bucket, list)
+        for material in bucket
+        if isinstance(material, dict) and material.get("id") is not None
+    }
+    visibility: list[dict[str, Any]] = []
+    transforms: list[dict[str, Any]] = []
+    max_end_us = 0
+    tracks = value.get("tracks") if isinstance(value.get("tracks"), list) else []
+    for track_index, track in enumerate(tracks):
+        if not isinstance(track, dict):
+            continue
+        segments = track.get("segments") if isinstance(track.get("segments"), list) else []
+        for segment_index, segment in enumerate(segments):
+            if not isinstance(segment, dict):
+                continue
+            row = {"track_index": track_index, "track_id": track.get("id"), "segment_index": segment_index, "segment_id": segment.get("id")}
+            visibility.append({**row, "visible": segment.get("visible", True)})
+            clip = segment.get("clip") if isinstance(segment.get("clip"), dict) else {}
+            timerange = segment.get("target_timerange") if isinstance(segment.get("target_timerange"), dict) else {}
+            start, duration = timerange.get("start"), timerange.get("duration")
+            if all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in (start, duration)):
+                max_end_us = max(max_end_us, start + duration)
+            transforms.append({
+                **row,
+                "clip": copy.deepcopy(clip),
+                "segment": copy.deepcopy(segment.get("transform")),
+                "material": material_transforms.get(str(segment.get("material_id"))),
+            })
+    duration = value.get("duration_us", value.get("duration"))
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
+        duration = max_end_us
+    return {"duration_us": duration, "row_count": len(visibility), "visibility_flags": visibility, "transforms": transforms}
+
+
+def _validate_source(project: Any, source_id: str) -> tuple[dict[str, Any] | None, list[str], list[str]]:
+    if not hasattr(project, "validate"):
+        return None, [], []
+    report = project.validate(source_id)
+    errors = _validation_errors(report, "source validation")
+    warnings: list[str] = []
+    if isinstance(report, dict):
+        errors, warnings = classify_replica_errors(errors, report.get("replica_manifest"))
+        report = {
+            **report,
+            "ok": not errors,
+            "errors": errors,
+            "warnings": [*map(str, report.get("warnings", [])), *warnings],
+        }
+    return report if isinstance(report, dict) else None, errors, warnings
+
+
+def _stale_preparation(reason: str) -> dict[str, Any]:
+    return result(
+        "packaging_commit",
+        data={"draft_writes": 0, "clone_created": False},
+        errors=[f"stale_preparation: {reason}"],
+        status="blocked",
+    )
+
+
+def prepare_packaging_plan(
     plan: Any,
     *,
     draft_path: str,
     timeline: str,
     editor_root: Any,
+    prepared_path: str | Path,
     sound_catalog: dict[str, Any] | None = None,
     sound_pools: dict[str, Any] | None = None,
     animation_cache_root: str | Path | None = None,
     animation_capabilities: dict[str, Any] | None = None,
     animation_version: str | None = None,
     existing_audio: Any = None,
-    apply: bool = False,
     project: Any = None,
     editor_api: Any = None,
     temp_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Dry-run or apply a validated schema 1.2 packaging plan."""
-
+    """Validate, transform, and persist a schema 2.0 candidate without draft writes."""
     if not isinstance(plan, dict):
-        return result("packaging_apply", input_errors=["plan must be a JSON object"])
-    if plan.get("schema_version") != "1.2":
-        return result("packaging_apply", errors=["only schema_version 1.2 can be applied"])
+        return result("packaging_prepare", input_errors=["plan must be a JSON object"])
+    if plan.get("schema_version") != "2.0":
+        return result("packaging_prepare", errors=["only schema_version 2.0 is supported"])
     execution = plan.get("execution") if isinstance(plan.get("execution"), dict) else {}
     if execution.get("mode") != "apply":
-        return result("packaging_apply", errors=["execution.mode must be apply for the packaging apply command"])
+        return result("packaging_prepare", errors=["execution.mode must be apply for packaging preparation"])
+
+    temp_base = Path(temp_root).resolve() if temp_root is not None else _default_temp_root().resolve()
+    try:
+        prepared_path = resolve_prepared_path(prepared_path, temp_base)
+    except (OSError, DraftApplyError) as exc:
+        return result("packaging_prepare", input_errors=[str(exc)])
 
     validation = validate_plan(plan, sound_catalog=sound_catalog, sound_pools=sound_pools)
     if not validation.get("ok"):
-        return result("packaging_apply", data={"validation": validation}, errors=validation.get("errors", []), warnings=validation.get("warnings", []))
+        return result(
+            "packaging_prepare",
+            data={"validation": validation},
+            errors=validation.get("errors", []),
+            warnings=validation.get("warnings", []),
+        )
 
-    apply_warnings: list[str] = []
+    warnings: list[str] = []
     try:
-        draft_root = Path(draft_path).resolve()
+        draft_root = Path(draft_path).expanduser().resolve()
         if not draft_root.exists():
-            return result("packaging_apply", input_errors=[f"draft path does not exist: {draft_root}"])
+            return result("packaging_prepare", input_errors=[f"draft path does not exist: {draft_root}"])
         plan_source = plan.get("source", {})
-        plan_draft = Path(str(plan_source.get("draft_path", ""))).resolve()
+        plan_draft = Path(str(plan_source.get("draft_path", ""))).expanduser().resolve()
         if plan_draft != draft_root:
-            return result("packaging_apply", errors=["source.draft_path does not match --draft"])
+            return result("packaging_prepare", errors=["source.draft_path does not match --draft"])
         if project is None or editor_api is None:
             editor_api = editor_api or _load_editor_api(Path(editor_root))
             project = project or editor_api.JianyingProject(str(draft_root))
@@ -1959,28 +2078,21 @@ def apply_packaging_plan(
         plan_entry = project.resolve_timeline(source_selector)
         source_id = str(selected_entry.get("id", ""))
         if not source_id or source_id != str(plan_entry.get("id", "")):
-            return result("packaging_apply", errors=["--timeline does not resolve to source.timeline"])
-        replica_warnings: list[str] = []
-        if hasattr(project, "validate"):
-            source_validation = project.validate(source_id)
-            source_errors, replica_warnings = classify_replica_errors(
-                _validation_errors(source_validation, "source validation"),
-                source_validation.get("replica_manifest"),
+            return result("packaging_prepare", errors=["--timeline does not resolve to source.timeline"])
+
+        source_validation, source_errors, replica_warnings = _validate_source(project, source_id)
+        warnings.extend(replica_warnings)
+        if source_errors:
+            return result(
+                "packaging_prepare",
+                data={"source_validation": source_validation},
+                errors=source_errors,
+                warnings=replica_warnings,
             )
-            source_validation = {
-                **source_validation,
-                "ok": not source_errors,
-                "errors": source_errors,
-                "warnings": [
-                    *[str(warning) for warning in source_validation.get("warnings", [])],
-                    *replica_warnings,
-                ],
-            }
-            if source_errors:
-                return result("packaging_apply", data={"source_validation": source_validation}, errors=source_errors, warnings=replica_warnings)
 
         source_value = project.decode(project.content_path(source_id)).value
         source_hash = _hash_value(source_value)
+        source_snapshot = _source_snapshot(source_value)
         animation_specs = [
             visual.get("animation")
             for group in plan.get("groups", []) if isinstance(group, dict)
@@ -1989,6 +2101,7 @@ def apply_packaging_plan(
         ]
         animation_inventory: dict[str, Any] | None = None
         animation_inventory_path: str | None = None
+        animation_validation: dict[str, Any] = {"status": "not_required"}
         if animation_specs:
             cache_root = _animation_cache_root(draft_root, animation_cache_root)
             current_version = _animation_version(project, animation_version)
@@ -2000,15 +2113,24 @@ def apply_packaging_plan(
             )
             if not inventory_report.get("ok"):
                 return result(
-                    "packaging_apply",
-                    data={"source_hash": source_hash, "animation_inventory": inventory_report},
+                    "packaging_prepare",
+                    data={"source_timeline_hash": source_hash, "animation_inventory": inventory_report},
                     errors=inventory_report.get("errors", []),
                     warnings=inventory_report.get("warnings", []),
                 )
-            temp_base = Path(temp_root) if temp_root is not None else _default_temp_root()
             animation_inventory_path = _write_temp_json(temp_base, "animation-inventories", inventory_report)
             animation_inventory = inventory_report
-        timeline_values: dict[str, dict[str, Any]] = {source_selector: source_value, source_id: source_value, "source": source_value}
+            animation_validation = {
+                "status": "passed",
+                "summary": inventory_report.get("summary", {}),
+                "warnings": inventory_report.get("warnings", []),
+            }
+
+        timeline_values: dict[str, dict[str, Any]] = {
+            source_selector: source_value,
+            source_id: source_value,
+            "source": source_value,
+        }
         required_preset_ids = {
             str(visual.get("preset_id"))
             for group in plan.get("groups", []) if isinstance(group, dict)
@@ -2018,7 +2140,7 @@ def apply_packaging_plan(
         for preset in plan.get("presets", []) if isinstance(plan.get("presets"), list) else []:
             if not isinstance(preset, dict) or str(preset.get("preset_id", "")) not in required_preset_ids:
                 continue
-            template = preset.get("template_source") if isinstance(preset, dict) else None
+            template = preset.get("template_source")
             selector = str(template.get("timeline", "")) if isinstance(template, dict) else ""
             if not selector or selector in timeline_values or selector in {"target", str(plan.get("target", {}).get("timeline_name", ""))}:
                 continue
@@ -2033,6 +2155,7 @@ def apply_packaging_plan(
             for group in plan_groups if isinstance(plan_groups, list)
         )
         sound_warnings: list[str] = list(replica_warnings)
+        sound_validation: dict[str, Any] = {"status": "not_required"}
         if has_sound_operations:
             audio_evidence = _normalize_audio_evidence(existing_audio) if existing_audio is not None else _audio_evidence_from_value(source_value)
             sound_report = check_sound_operations(
@@ -2043,7 +2166,17 @@ def apply_packaging_plan(
             )
             sound_warnings.extend(sound_report.get("warnings", []))
             if not sound_report.get("ok"):
-                return result("packaging_apply", data={"source_hash": source_hash, "sound_check": sound_report}, errors=sound_report.get("errors", []), warnings=sound_warnings)
+                return result(
+                    "packaging_prepare",
+                    data={"source_timeline_hash": source_hash, "sound_validation": sound_report},
+                    errors=sound_report.get("errors", []),
+                    warnings=sound_warnings,
+                )
+            sound_validation = {
+                "status": "passed",
+                "summary": sound_report.get("summary", {}),
+                "warnings": sound_report.get("warnings", []),
+            }
 
         transformed = transform_packaging_plan(
             source_value,
@@ -2053,12 +2186,22 @@ def apply_packaging_plan(
             animation_inventory=animation_inventory,
         )
         if not transformed.get("ok"):
-            return result("packaging_apply", data={"source_hash": source_hash}, errors=transformed.get("errors", []), warnings=[*sound_warnings, *transformed.get("warnings", [])])
+            return result(
+                "packaging_prepare",
+                data={"source_timeline_hash": source_hash},
+                errors=transformed.get("errors", []),
+                warnings=[*sound_warnings, *transformed.get("warnings", [])],
+            )
         candidate = transformed["data"]["value"]
-        content_validation = editor_api.validate_content(candidate, expected_id=source_id)
-        content_errors = _validation_errors(content_validation, "candidate content validation")
-        if content_errors:
-            return result("packaging_apply", data={"source_hash": source_hash, "candidate_validation": content_validation}, errors=content_errors)
+        candidate_validation = editor_api.validate_content(candidate, expected_id=source_id)
+        candidate_errors = _validation_errors(candidate_validation, "candidate content validation")
+        if candidate_errors:
+            return result(
+                "packaging_prepare",
+                data={"source_timeline_hash": source_hash, "candidate_validation": candidate_validation},
+                errors=candidate_errors,
+                warnings=sound_warnings,
+            )
 
         visual_preview_path: str | None = None
         visual_preview_sha256: str | None = None
@@ -2067,53 +2210,252 @@ def apply_packaging_plan(
                 preview_html = build_html_preview(transformed["data"]["visual_preview_model"])
                 preview_bytes = preview_html.encode("utf-8")
                 visual_preview_sha256 = "sha256:" + hashlib.sha256(preview_bytes).hexdigest()
-                temp_base = Path(temp_root).resolve() if temp_root is not None else _default_temp_root().resolve()
                 visual_preview_path = _write_temp_html(temp_base, "visual-previews", preview_html)
             except (DraftApplyError, VisualPreviewError, OSError, KeyError, TypeError, ValueError) as exc:
-                return result("packaging_apply", data={"source_hash": source_hash}, errors=[f"visual preview could not be generated: {exc}"])
+                return result(
+                    "packaging_prepare",
+                    data={"source_timeline_hash": source_hash},
+                    errors=[f"visual preview could not be generated: {exc}"],
+                    warnings=sound_warnings,
+                )
 
         target = plan.get("target", {}) if isinstance(plan.get("target"), dict) else {}
         clone_source = target.get("clone_source") is True
         target_name = str(target.get("timeline_name", ""))
         if clone_source:
-            collisions = [entry for entry in project.timeline_entries() if str(entry.get("name", "")).casefold() == target_name.casefold() and str(entry.get("id")) != source_id]
+            collisions = [
+                entry for entry in project.timeline_entries()
+                if str(entry.get("name", "")).casefold() == target_name.casefold()
+                and str(entry.get("id")) != source_id
+            ]
             if collisions:
-                return result("packaging_apply", errors=[f"target timeline name {target_name!r} already exists"])
+                return result("packaging_prepare", errors=[f"target timeline name {target_name!r} already exists"])
 
-        preview_data = {
-            "dry_run": not apply,
-            "phase": execution.get("phase"),
-            "would_change": bool(transformed["data"].get("changes")),
+        apply_warnings = [*sound_warnings, *transformed.get("warnings", [])]
+        prepared = {
+            "prepared_schema_version": "2.0",
+            "draft_selector": str(draft_root),
+            "source_selector": source_id,
             "source_timeline_id": source_id,
+            "source_timeline_name": str(selected_entry.get("name", "")),
+            "requested_timeline": str(timeline),
+            "plan_hash": _prepared_plan_hash(plan),
             "source_timeline_hash": source_hash,
-            "target_timeline_name": target_name if clone_source else selected_entry.get("name"),
+            "source_snapshot": source_snapshot,
+            "candidate_hash": _hash_value(candidate),
+            "candidate_value": candidate,
             "changes": transformed["data"].get("changes", []),
-            "draft_writes": 0,
-            "clone_created": False,
-            "next_step": "Review the dry-run change list; an authorized --apply run is still required for writes.",
-            "validation": validation,
-            "source_replica_warnings": replica_warnings,
-            "animation_inventory_path": animation_inventory_path,
+            "phase": execution.get("phase"),
+            "target": {"clone_source": clone_source, "timeline_name": target_name},
             "visual_preview_path": visual_preview_path,
             "visual_preview_sha256": visual_preview_sha256,
-            "native_visual_verification": "pending after reopening Jianying",
+            "sound_validation": sound_validation,
+            "animation_validation": animation_validation,
+            "animation_inventory_path": animation_inventory_path,
+            "source_replica_validation": source_validation,
+            "source_replica_warnings": replica_warnings,
+            "candidate_validation": candidate_validation,
+            "plan_validation": {"ok": True, "warnings": validation.get("warnings", [])},
+            "warnings": apply_warnings,
         }
-        apply_warnings = [*sound_warnings, *transformed.get("warnings", [])]
-        if not apply:
-            return result("packaging_apply", data=preview_data, warnings=apply_warnings)
+        prepared["prepared_artifact_hash"] = _prepared_artifact_hash(prepared)
+        _write_prepared(prepared_path, prepared)
+        report_data = {
+            "prepared_schema_version": "2.0",
+            "prepared_artifact_hash": prepared["prepared_artifact_hash"],
+            "prepared_path": str(prepared_path),
+            "source_timeline_id": source_id,
+            "source_timeline_hash": source_hash,
+            "candidate_hash": prepared["candidate_hash"],
+            "source_snapshot": source_snapshot,
+            "phase": prepared["phase"],
+            "target_timeline_name": target_name if clone_source else selected_entry.get("name"),
+            "changes": prepared["changes"],
+            "draft_writes": 0,
+            "clone_created": False,
+            "visual_preview_path": visual_preview_path,
+            "visual_preview_sha256": visual_preview_sha256,
+            "animation_inventory_path": animation_inventory_path,
+            "sound_validation": sound_validation,
+            "animation_validation": animation_validation,
+            "next_step": "Review the prepared candidate; commit only after required approvals.",
+        }
+        return result(
+            "packaging_prepare",
+            data=report_data,
+            warnings=apply_warnings,
+            summary={"change_count": len(prepared["changes"]), "source_timeline_id": source_id},
+        )
+    except (OSError, RuntimeError, ImportError, AttributeError, DraftApplyError, ValueError, KeyError, TypeError) as exc:
+        return result("packaging_prepare", input_errors=[f"prepare failed: {type(exc).__name__}: {exc}"], warnings=warnings)
 
-        if visual_preview_sha256 is not None:
-            review = plan.get("review_report") if isinstance(plan.get("review_report"), dict) else {}
-            if review.get("visual_preview_status") != "approved":
-                return result("packaging_apply", data=preview_data, errors=["visual preview must be approved before apply"])
-            if review.get("visual_preview_sha256") != visual_preview_sha256:
-                return result("packaging_apply", data=preview_data, errors=["approved visual preview hash does not match the current candidate preview hash"])
+
+def commit_prepared_packaging(
+    plan: Any,
+    prepared: Any,
+    *,
+    approved_prepared_hash: str,
+    draft_path: str,
+    timeline: str,
+    editor_root: Any,
+    prepared_path: str | Path,
+    project: Any = None,
+    editor_api: Any = None,
+    temp_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Commit an approved, unchanged preparation through the editor transaction API."""
+    if not isinstance(plan, dict):
+        return result("packaging_commit", input_errors=["plan must be a JSON object"])
+    if plan.get("schema_version") != "2.0":
+        return result("packaging_commit", errors=["only schema_version 2.0 is supported"])
+    if not isinstance(prepared, dict):
+        return result("packaging_commit", input_errors=["prepared artifact must be a JSON object"])
+    if prepared.get("prepared_schema_version") != "2.0":
+        return result("packaging_commit", errors=["prepared_schema_version must be 2.0"])
+    if not isinstance(approved_prepared_hash, str) or not approved_prepared_hash:
+        return result("packaging_commit", errors=["the exact prepared artifact hash must be approved before commit"])
+    if prepared.get("prepared_artifact_hash") != approved_prepared_hash:
+        return _stale_preparation("prepared artifact does not match the approved result")
+    if prepared.get("prepared_artifact_hash") != _prepared_artifact_hash(prepared):
+        return _stale_preparation("prepared artifact hash changed")
+    execution = plan.get("execution") if isinstance(plan.get("execution"), dict) else {}
+    if execution.get("mode") != "apply":
+        return result("packaging_commit", errors=["execution.mode must be apply for packaging commit"])
+
+    temp_base = Path(temp_root).resolve() if temp_root is not None else _default_temp_root().resolve()
+    try:
+        prepared_path = resolve_prepared_path(prepared_path, temp_base)
+        saved_prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, DraftApplyError) as exc:
+        return result("packaging_commit", input_errors=[str(exc)])
+    if not isinstance(saved_prepared, dict) or _canonical_json(saved_prepared) != _canonical_json(prepared):
+        return _stale_preparation("prepared artifact changed after it was loaded")
+    prepared = saved_prepared
+
+    candidate = prepared.get("candidate_value")
+    if not isinstance(candidate, dict):
+        return result("packaging_commit", errors=["prepared candidate_value must be an object"])
+    if not isinstance(prepared.get("plan_validation"), dict) or prepared["plan_validation"].get("ok") is not True:
+        return result("packaging_commit", errors=["prepared plan-validation summary is missing or failed"])
+    if not isinstance(prepared.get("candidate_validation"), dict) or prepared["candidate_validation"].get("ok") is not True:
+        return result("packaging_commit", errors=["prepared candidate-validation summary is missing or failed"])
+    groups = plan.get("groups") if isinstance(plan.get("groups"), list) else []
+    needs_sound_check = any(
+        isinstance(group, dict)
+        and isinstance(group.get("audio"), dict)
+        and group["audio"].get("action") not in (None, "none")
+        for group in groups
+    )
+    sound_validation = prepared.get("sound_validation")
+    expected_sound_status = "passed" if needs_sound_check else "not_required"
+    if not isinstance(sound_validation, dict) or sound_validation.get("status") != expected_sound_status:
+        return result("packaging_commit", errors=["prepared sound-validation summary is missing or inconsistent"])
+    needs_animation_inventory = any(
+        isinstance(visual, dict) and visual.get("animation") is not None
+        for group in groups if isinstance(group, dict)
+        for visual in group.get("visual", []) if isinstance(group.get("visual"), list)
+    )
+    animation_validation = prepared.get("animation_validation")
+    expected_animation_status = "passed" if needs_animation_inventory else "not_required"
+    if not isinstance(animation_validation, dict) or animation_validation.get("status") != expected_animation_status:
+        return result("packaging_commit", errors=["prepared animation-validation summary is missing or inconsistent"])
+    if prepared.get("plan_hash") != _prepared_plan_hash(plan):
+        return _stale_preparation("plan hash changed after prepare")
+    if prepared.get("candidate_hash") != _hash_value(candidate):
+        return _stale_preparation("candidate hash does not match candidate_value")
+
+    target = plan.get("target", {}) if isinstance(plan.get("target"), dict) else {}
+    prepared_target = {
+        "clone_source": target.get("clone_source") is True,
+        "timeline_name": str(target.get("timeline_name", "")),
+    }
+    if prepared.get("target") != prepared_target or prepared.get("phase") != execution.get("phase"):
+        return _stale_preparation("target or phase changed after prepare")
+
+    draft_root = Path(draft_path).expanduser().resolve()
+    if not draft_root.exists():
+        return result("packaging_commit", input_errors=[f"draft path does not exist: {draft_root}"])
+    if prepared.get("draft_selector") != str(draft_root):
+        return _stale_preparation("draft selector changed after prepare")
+    plan_source = plan.get("source", {})
+    if not isinstance(plan_source, dict) or Path(str(plan_source.get("draft_path", ""))).expanduser().resolve() != draft_root:
+        return _stale_preparation("source.draft_path does not match the prepared draft selector")
+
+    preview_path_value = prepared.get("visual_preview_path")
+    preview_hash = prepared.get("visual_preview_sha256")
+    review = plan.get("review_report") if isinstance(plan.get("review_report"), dict) else {}
+    if _requires_visual_preview(plan) and not preview_hash:
+        return result("packaging_commit", errors=["prepared visual preview is missing"])
+    if preview_hash is not None:
+        if review.get("visual_preview_status") != "approved":
+            return result("packaging_commit", errors=["visual preview must be approved before commit"])
+        if review.get("visual_preview_sha256") != preview_hash:
+            return result("packaging_commit", errors=["approved visual preview hash does not match the prepared candidate"])
+        try:
+            preview_path = Path(str(preview_path_value)).resolve()
+            preview_path.relative_to(temp_base)
+            if not preview_path.is_file():
+                return _stale_preparation("prepared preview is missing")
+            actual_preview_hash = "sha256:" + hashlib.sha256(preview_path.read_bytes()).hexdigest()
+            if actual_preview_hash != preview_hash:
+                return _stale_preparation("prepared preview content changed")
+        except (OSError, ValueError):
+            return _stale_preparation("prepared preview path is invalid")
+
+    warnings = [str(item) for item in prepared.get("warnings", [])]
+    source_id = str(prepared.get("source_timeline_id", ""))
+    if not source_id or prepared.get("source_selector") != source_id:
+        return _stale_preparation("source selector is invalid")
+    source_hash = prepared.get("source_timeline_hash")
+    source_snapshot = prepared.get("source_snapshot")
+    if not isinstance(source_hash, str) or not isinstance(source_snapshot, dict):
+        return result("packaging_commit", errors=["prepared source snapshot is incomplete"])
+
+    clone_source = prepared_target["clone_source"]
+    target_name = prepared_target["timeline_name"]
+    clone_created = False
+    target_id = source_id
+    write_started = False
+    apply_warnings = list(warnings)
+    try:
+        if project is None or editor_api is None:
+            editor_api = editor_api or _load_editor_api(Path(editor_root))
+            project = project or editor_api.JianyingProject(str(draft_root))
+
+        source_selector = str(plan_source.get("timeline", ""))
+        selected_entry = project.resolve_timeline(timeline)
+        plan_entry = project.resolve_timeline(source_selector)
+        resolved_source_id = str(selected_entry.get("id", ""))
+        if not resolved_source_id or resolved_source_id != str(plan_entry.get("id", "")) or resolved_source_id != source_id:
+            return _stale_preparation("source timeline selector changed after prepare")
+
+        source_validation, source_errors, replica_warnings = _validate_source(project, source_id)
+        _append_warnings(apply_warnings, replica_warnings)
+        if source_errors:
+            return result(
+                "packaging_commit",
+                data={"source_validation": source_validation, "draft_writes": 0, "clone_created": False},
+                errors=source_errors,
+                warnings=apply_warnings,
+            )
+
+        source_value = project.decode(project.content_path(source_id)).value
+        if _hash_value(source_value) != source_hash or _canonical_json(_source_snapshot(source_value)) != _canonical_json(source_snapshot):
+            return _stale_preparation("source timeline hash, duration, row count, visibility, or transform changed")
+
+        if clone_source:
+            collisions = [
+                entry for entry in project.timeline_entries()
+                if str(entry.get("name", "")).casefold() == target_name.casefold()
+                and str(entry.get("id")) != source_id
+            ]
+            if collisions:
+                return result("packaging_commit", errors=[f"target timeline name {target_name!r} already exists"], warnings=apply_warnings)
 
         close_warning = project._assert_editor_closed() if hasattr(project, "_assert_editor_closed") else None
         if close_warning:
             apply_warnings.append(str(close_warning))
 
-        target_id = source_id
         clone_backup = None
         pre_clone_project_index_sha256 = None
         if clone_source:
@@ -2128,11 +2470,12 @@ def apply_packaging_plan(
                 raise
             _append_warnings(apply_warnings, clone_result.get("warnings"))
             if not clone_result.get("ok"):
-                return result("packaging_apply", data=preview_data, errors=[str(clone_result.get("error", clone_result))], warnings=apply_warnings)
+                return result("packaging_commit", data={"draft_writes": 0, "clone_created": False}, errors=[str(clone_result.get("error", clone_result))], warnings=apply_warnings)
             target_id = str(clone_result.get("timeline_id", ""))
             clone_backup = clone_result.get("backup")
+            clone_created = bool(target_id)
             if not target_id:
-                return result("packaging_apply", data=preview_data, errors=["editor clone did not return a timeline_id"], warnings=apply_warnings)
+                return result("packaging_commit", data={"draft_writes": 1, "clone_created": True}, errors=["editor clone did not return a timeline_id"], warnings=apply_warnings)
             clone_backup = _validate_clone_backup(
                 project,
                 clone_backup,
@@ -2142,34 +2485,43 @@ def apply_packaging_plan(
             clone_base = project.decode(project.content_path(target_id)).value
             expected_clone = _replace_ids(copy.deepcopy(source_value), {source_id: target_id})
             if _canonical_json(clone_base) != _canonical_json(expected_clone):
-                return result("packaging_apply", data={**preview_data, "target_timeline_id": target_id, "draft_writes": 1, "clone_created": True}, errors=["new clone does not match the preflight source snapshot; clone was left untouched"], warnings=apply_warnings)
+                return result(
+                    "packaging_commit",
+                    data={"target_timeline_id": target_id, "draft_writes": 1, "clone_created": True, "target_clone_preserved": True},
+                    errors=["new clone does not match the prepared source snapshot; clone was left untouched"],
+                    warnings=apply_warnings,
+                )
             if hasattr(project, "replica_paths"):
                 source_replicas = {Path(path).resolve() for path in project.replica_paths(source_id)}
                 target_replicas = {Path(path).resolve() for path in project.replica_paths(target_id)}
                 overlap = sorted(str(path) for path in source_replicas & target_replicas)
                 if overlap:
-                    return result("packaging_apply", data={**preview_data, "target_timeline_id": target_id, "draft_writes": 1, "clone_created": True}, errors=[f"clone replicas overlap source replicas: {overlap}"], warnings=apply_warnings)
+                    return result(
+                        "packaging_commit",
+                        data={"target_timeline_id": target_id, "draft_writes": 1, "clone_created": True, "target_clone_preserved": True},
+                        errors=[f"clone replicas overlap source replicas: {overlap}"],
+                        warnings=apply_warnings,
+                    )
             if _hash_value(project.decode(project.content_path(source_id)).value) != source_hash:
-                return result("packaging_apply", data={**preview_data, "target_timeline_id": target_id, "draft_writes": 1, "clone_created": True}, errors=["source timeline changed between preflight and clone; clone was left untouched"], warnings=apply_warnings)
+                return result(
+                    "packaging_commit",
+                    data={"target_timeline_id": target_id, "draft_writes": 1, "clone_created": True, "target_clone_preserved": True},
+                    errors=["source timeline changed between prepare and clone; clone was left untouched"],
+                    warnings=apply_warnings,
+                )
         else:
             if not execution.get("allow_in_place") or not execution.get("authorization_note"):
-                return result("packaging_apply", data=preview_data, errors=["in-place apply requires the plan's explicit authorized exception"], warnings=apply_warnings)
+                return result("packaging_commit", data={"draft_writes": 0, "clone_created": False}, errors=["in-place commit requires the plan's explicit authorized exception"], warnings=apply_warnings)
             clone_base = copy.deepcopy(source_value)
 
         write_value = _replace_ids(copy.deepcopy(candidate), {source_id: target_id})
         write_value["id"] = target_id
-        target_validation = editor_api.validate_content(write_value, expected_id=target_id)
-        target_errors = _validation_errors(target_validation, "target content validation")
-        if target_errors:
-            if clone_source:
-                return result("packaging_apply", data={**preview_data, "target_timeline_id": target_id, "draft_writes": 1, "clone_created": True}, errors=target_errors, warnings=apply_warnings)
-            return result("packaging_apply", data=preview_data, errors=target_errors, warnings=apply_warnings)
-
         try:
+            write_started = True
             write_result = project._write_content(target_id, write_value)
             readback = project.decode(project.content_path(target_id)).value
             if _canonical_json(readback) != _canonical_json(write_value):
-                raise DraftApplyError("editor read-back differs from the planned packaging value")
+                raise DraftApplyError("editor read-back differs from the prepared packaging value")
             readback_validation = project.validate(target_id)
             readback_errors = _validation_errors(readback_validation, "editor replica validation")
             if readback_errors:
@@ -2184,42 +2536,67 @@ def apply_packaging_plan(
                 current_after_failure = project.decode(project.content_path(target_id)).value
                 primary_restored = _canonical_json(current_after_failure) == _canonical_json(clone_base)
                 rollback_validation = project.validate(target_id)
-                target_restored = primary_restored and bool(rollback_validation.get("ok"))
+                target_restored = primary_restored and not _validation_errors(rollback_validation, "rollback replica validation")
                 if not target_restored:
-                    validation_errors = rollback_validation.get("errors", [])
-                    rollback_error = "rollback validation failed: " + "; ".join(validation_errors) if validation_errors else "read-back after rollback differs from the pre-write clone"
-            except Exception as rollback_exc:  # report both the failed operation and failed rollback
+                    validation_errors = rollback_validation.get("errors", []) if isinstance(rollback_validation, dict) else []
+                    rollback_error = "rollback validation failed: " + "; ".join(map(str, validation_errors)) if validation_errors else "read-back after rollback differs from the pre-write clone"
+            except Exception as rollback_exc:
                 rollback_error = str(rollback_exc)
             errors = [f"packaging write failed: {exc}"]
             if rollback_error:
                 errors.append(f"target rollback also failed: {rollback_error}")
-            return result("packaging_apply", data={**preview_data, "target_timeline_id": target_id, "draft_writes": 1 if clone_source else 0, "clone_created": clone_source, "target_clone_preserved": target_restored}, errors=errors, warnings=apply_warnings)
+            return result(
+                "packaging_commit",
+                data={
+                    "target_timeline_id": target_id,
+                    "draft_writes": 1 if clone_source else 0,
+                    "clone_created": clone_source,
+                    "target_clone_preserved": target_restored,
+                },
+                errors=errors,
+                warnings=apply_warnings,
+            )
 
         data = {
-            **preview_data,
+            "prepared_schema_version": "2.0",
             "dry_run": False,
+            "phase": prepared.get("phase"),
+            "would_change": bool(prepared.get("changes")),
+            "source_timeline_id": source_id,
+            "source_timeline_hash": source_hash,
+            "target_timeline_name": target_name if clone_source else selected_entry.get("name"),
+            "changes": prepared.get("changes", []),
+            "visual_preview_path": prepared.get("visual_preview_path"),
+            "visual_preview_sha256": preview_hash,
+            "animation_inventory_path": prepared.get("animation_inventory_path"),
             "draft_writes": 2 if clone_source else 1,
             "clone_created": clone_source,
             "target_timeline_id": target_id,
-            "target_timeline_name": target_name if clone_source else selected_entry.get("name"),
             "backup": write_result.get("backup") or clone_backup,
             "replicas_checked": readback_validation.get("replicas_checked"),
             "readback_matches_plan": True,
             "source_preserved": clone_source and _hash_value(project.decode(project.content_path(source_id)).value) == source_hash,
             "human_visual_audio_review": "pending",
             "phase_state": {
-                "packaging_staging": "reviewing" if execution.get("phase") == "staging" else "approved",
-                "packaging_final": "not_started" if execution.get("phase") == "staging" else "awaiting_human_visual_audio_review",
+                "packaging_staging": "reviewing" if prepared.get("phase") == "staging" else "approved",
+                "packaging_final": "not_started" if prepared.get("phase") == "staging" else "awaiting_human_visual_audio_review",
             },
             "next_step": (
                 "Open the cloned staging timeline in Jianying and review selection, wording, timing, overlap, and obstruction."
-                if execution.get("phase") == "staging"
+                if prepared.get("phase") == "staging"
                 else "Reopen Jianying and complete visual/audio review; do not report the package as verified yet."
             ),
         }
-        return result("packaging_apply", data=data, warnings=apply_warnings)
+        return result("packaging_commit", data=data, warnings=apply_warnings)
     except (OSError, RuntimeError, ImportError, AttributeError, DraftApplyError, ValueError, KeyError, TypeError) as exc:
-        return result("packaging_apply", input_errors=[f"apply preflight failed: {type(exc).__name__}: {exc}"], warnings=apply_warnings)
+        return result(
+            "packaging_commit",
+            data={"target_timeline_id": target_id if clone_created else None, "draft_writes": 1 if clone_created else 0, "clone_created": clone_created, "target_clone_preserved": clone_created and not write_started},
+            input_errors=[f"commit failed: {type(exc).__name__}: {exc}"],
+            warnings=apply_warnings,
+        )
+
+
 
 
 def _load_editor_api(editor_root: Path) -> Any:
