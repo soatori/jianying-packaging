@@ -1,5 +1,43 @@
 # Semantic emphasis and sound design
 
+## Subtitle format profile (preflight, before emphasis selection)
+
+Vertical (9:16) delivery uses one standing text profile. It is a format
+convention, not a single project's copy, so it may live here; a project that
+overrides it keeps the override in its own external case reference.
+
+For `canvas_width < canvas_height`, every approved subtitle line must satisfy:
+
+- One sentence per line. A punctuation-triggered break starts a new line; lines
+  are separated by `\n` inside the text material, and one screen never carries
+  two sentences.
+- No punctuation survives. `。`, `，`, `！`, `？`, `；`, `：`, `……` are split
+  triggers only and are deleted after splitting; nothing is left at a line end.
+- No unsplit long run. Punctuation-free text longer than the limit must be
+  force-split on a real pause or a complete-token edge — never by character
+  count alone, and never allowed to wrap by itself.
+- At most 10 Chinese characters per line.
+- Modal particles stand alone: `嗯`, `啊`, `欸`, `哦`, `呢`, `呐` each get their
+  own line and are never merged into the neighbouring sentence or dropped.
+
+Example: `今天天气真好啊我们去公园玩吧你说好不好呢` →
+`今天天气真好` / `啊` / `我们去公园玩吧` / `你说好不好` / `呢`.
+
+Preflight behavior:
+
+1. Check the current saved subtitles against this profile **before** reading any
+   group, so emphasis units are counted on correctly broken lines. A line that
+   still contains punctuation or exceeds 10 characters is a profile violation,
+   not an emphasis candidate.
+2. Packaging never repairs the violation itself. Rewriting line breaks here
+   would silently consume an upstream segmentation problem; record the offending
+   rows and set `needs_rough_cut_review`, which returns the work to the subtitle
+   owner. Horizontal (16:9) delivery is not covered by this profile and keeps
+   its own case rule (typically a two-line title fold that preserves the final
+   `？`), so never generalize these five bullets across orientations.
+3. Any approved re-line breaking must sync `styles[].range` to the new text
+   length including `\n`; a stale range is a silent color/stroke truncation.
+
 ## Context-first emphasis
 
 Evaluate each complete sentence with the previous and next sentence, the current topic, and the video's communication goal. Subtitle rows are timing containers, not necessarily semantic groups.

@@ -17,6 +17,12 @@ Use this skill to audit a saved timeline or plan semantic emphasis and its visua
 
 ## Emphasis selection
 
+Before selecting anything, run the vertical subtitle format preflight in
+[references/semantic-packaging.md](references/semantic-packaging.md#subtitle-format-profile-preflight-before-emphasis-selection)
+against the current saved subtitles. Emphasis units are counted on correctly
+broken lines; a violating line is a rough-cut review item, not an emphasis
+candidate, and packaging does not re-break it.
+
 Read each complete sentence with its neighboring context and the video's communication goal. Select by meaning, not keyword frequency.
 
 - The default emphasis unit is a complete sentence. Select and preserve the complete sentence as supplied in the current subtitles.
