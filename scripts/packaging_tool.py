@@ -17,6 +17,7 @@ from typing import Any
 from packaging_tools.io import BlockedReportError, dump_json, load_json, text_result, unwrap_report, write_json
 from packaging_tools.inventory import inventory_templates_and_materials
 from packaging_tools.audio_inventory import classify_audio_events
+from packaging_tools.audit_bundle import build_audit_bundle
 from packaging_tools.draft_apply import (
     commit_prepared_packaging,
     prepare_packaging_plan,
@@ -50,6 +51,123 @@ def _editor_root(value: str | None) -> Path:
     return Path(__file__).resolve().parents[2] / "jianying-editor-skill"
 
 
+def _has_sound_operations(plan: Any) -> bool:
+    groups = plan.get("groups", []) if isinstance(plan, dict) else []
+    if not isinstance(groups, list):
+        return False
+    return any(
+        isinstance(group, dict)
+        and isinstance(audio := (group.get("audio") or group.get("sound")), dict)
+        and audio.get("action") not in (None, "none")
+        for group in groups
+    )
+
+
+def _prepare_command_template(args: argparse.Namespace, placeholders: set[str] | None = None) -> str:
+    placeholders = placeholders or set()
+    parts = [
+        "python scripts/packaging_tool.py prepare",
+        f'--draft "{args.draft}"',
+        f'--timeline "{args.timeline}"',
+        f'--plan "{args.plan}"',
+        f'--prepared "{args.prepared}"',
+    ]
+    optional = (
+        ("--catalog", "catalog", "<current-case-catalog.json>"),
+        ("--pools", "pools", "<current-case-pools.json>"),
+        ("--existing-audio", "existing_audio", "<dialogue-intervals.json>"),
+        ("--animation-cache-root", "animation_cache_root", "<JianYing-User-Data-Cache>"),
+        ("--animation-version", "animation_version", "<installed-version>"),
+        ("--animation-capabilities", "animation_capabilities", "<same-version-capabilities.json>"),
+        ("--editor-root", "editor_root", "<jianying-editor-root>"),
+    )
+    for flag, attribute, placeholder in optional:
+        value = getattr(args, attribute, None)
+        if flag in placeholders:
+            parts.append(f'{flag} "{placeholder}"')
+        elif value:
+            parts.append(f'{flag} "{value}"')
+    return " ".join(parts)
+
+
+def _case_input_block(args: argparse.Namespace, missing: list[tuple[str, str, str]]) -> dict[str, Any]:
+    placeholders = {flag for flag, _, _ in missing}
+    details = "; ".join(f"{flag}: {reason}; expected {schema}" for flag, reason, schema in missing)
+    command = _prepare_command_template(args, placeholders)
+    return result(
+        "packaging_prepare",
+        input_errors=[f"{details}. Rerun with: {command}"],
+        status="blocked",
+    )
+
+
+def _read_prepare_case_file(
+    args: argparse.Namespace,
+    flag: str,
+    path: str,
+    required_array: str | None,
+    schema: str,
+) -> tuple[Any, dict[str, Any] | None]:
+    try:
+        value = unwrap_report(load_json(path))
+    except (OSError, ValueError, TypeError) as exc:
+        return None, _case_input_block(args, [(flag, f"file {path!r} is missing or unreadable ({exc})", schema)])
+    if required_array and (not isinstance(value, dict) or not isinstance(value.get(required_array), list)):
+        return None, _case_input_block(args, [(flag, f"file {path!r} has the wrong shape", schema)])
+    return value, None
+
+
+def _prepare_remediation(report: dict[str, Any], args: argparse.Namespace, plan: Any) -> dict[str, Any]:
+    details: list[str] = []
+    placeholders: set[str] = set()
+    errors = [str(item) for item in [*(report.get("errors") or []), *(report.get("input_errors") or [])]]
+    error_text = " ".join(errors).lower()
+    if _has_sound_operations(plan) and "dialogue evidence is required for final sound preparation" in error_text:
+        details.append(
+            '`--existing-audio` must contain a recognized dialogue interval, for example '
+            '{"dialogue_intervals":[{"id":"voice-1","start_us":0,"end_us":1000000}]}'
+        )
+        placeholders.add("--existing-audio")
+
+    if "absent from the sound catalog" in error_text:
+        details.append(
+            "the current-case catalog needs a `presets[]` entry whose `preset_id` matches the plan; final use requires `status: verified`"
+        )
+        placeholders.update({"--catalog", "--pools"})
+    if "unknown candidate pool" in error_text or "candidate_pool_incomplete" in error_text or "absent from candidate pool" in error_text:
+        details.append(
+            "the current-case pools need a `pools[]` entry with the referenced `pool_id` and a `candidates[]` list containing `preset_id`, `rank`, `sound_form`, and `status`"
+        )
+        placeholders.update({"--catalog", "--pools"})
+
+    animation_flags: set[str] = set()
+    if "pass --animation-version" in error_text or "version is unresolved" in error_text or "version is required for animation" in error_text:
+        animation_flags.add("--animation-version")
+        details.append("pass the installed Jianying version with `--animation-version`")
+    if "pass --animation-cache-root" in error_text or "animation cache root" in error_text:
+        animation_flags.add("--animation-cache-root")
+        details.append("pass the current effect cache directory with `--animation-cache-root`")
+    if "not visually verified for plain text" in error_text or "not verified for a plain-text target" in error_text or "capability version" in error_text:
+        animation_flags.add("--animation-capabilities")
+        details.append(
+            '`--animation-capabilities` must be same-version JSON with `jianying_version` and `verified` entries containing `resource_id`, `md5`, `target_kind: "plain_text"`, and `status: "visually_verified"`'
+        )
+    placeholders.update(animation_flags)
+
+    if details:
+        command = _prepare_command_template(args, placeholders)
+        input_errors = report.get("input_errors")
+        if not isinstance(input_errors, list):
+            input_errors = []
+        report["input_errors"] = [
+            *input_errors,
+            f"Evidence is missing or unresolved: {'; '.join(details)}. Rerun with: {command}",
+        ]
+        report["ok"] = False
+        report["status"] = "blocked"
+    return report
+
+
 def _run(args: argparse.Namespace) -> dict[str, Any]:
     command = args.command
     if command == "validate":
@@ -77,11 +195,65 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             return result("packaging_generic_content_validation", data=report, errors=report.get("errors", []), input_errors=report.get("input_errors", []), warnings=report.get("warnings", []))
     if command == "prepare":
         plan = unwrap_report(load_json(args.plan))
-        catalog = unwrap_report(load_json(args.catalog)) if args.catalog else None
-        pools = unwrap_report(load_json(args.pools)) if args.pools else None
-        animation_capabilities = unwrap_report(load_json(args.animation_capabilities)) if args.animation_capabilities else None
-        existing_audio = unwrap_report(load_json(args.existing_audio)) if args.existing_audio else None
-        return prepare_packaging_plan(
+        if _has_sound_operations(plan):
+            missing = []
+            for flag, path, schema in (
+                ("--catalog", args.catalog, 'a JSON object with a top-level "presets" array'),
+                ("--pools", args.pools, 'a JSON object with a top-level "pools" array'),
+            ):
+                if not path or not Path(path).is_file():
+                    detail = "flag is missing" if not path else f"file {path!r} does not exist or is not a file"
+                    missing.append((flag, detail, schema))
+            if missing:
+                return _case_input_block(args, missing)
+
+        if args.catalog:
+            catalog, issue = _read_prepare_case_file(
+                args, "--catalog", args.catalog, "presets",
+                'a JSON object with a top-level "presets" array',
+            )
+            if issue:
+                return issue
+        else:
+            catalog = None
+        if args.pools:
+            pools, issue = _read_prepare_case_file(
+                args, "--pools", args.pools, "pools",
+                'a JSON object with a top-level "pools" array',
+            )
+            if issue:
+                return issue
+        else:
+            pools = None
+        if args.animation_capabilities:
+            animation_capabilities, issue = _read_prepare_case_file(
+                args, "--animation-capabilities", args.animation_capabilities, "verified",
+                'a JSON object with `jianying_version` and a `verified` array',
+            )
+            if issue:
+                return issue
+            if not isinstance(animation_capabilities.get("jianying_version"), str):
+                return _case_input_block(args, [(
+                    "--animation-capabilities", "file has no `jianying_version`",
+                    'same-version JSON with `jianying_version` and `verified` entries',
+                )])
+        else:
+            animation_capabilities = None
+        if args.existing_audio:
+            existing_audio, issue = _read_prepare_case_file(
+                args, "--existing-audio", args.existing_audio, None,
+                'a JSON object or array with explicit audio intervals; dialogue rows need `id`, `start_us`, and `end_us`',
+            )
+            if issue:
+                return issue
+            if not isinstance(existing_audio, (dict, list)):
+                return _case_input_block(args, [(
+                    "--existing-audio", "file must contain an object or array",
+                    'a JSON object or array with explicit audio intervals',
+                )])
+        else:
+            existing_audio = None
+        report = prepare_packaging_plan(
             plan,
             draft_path=args.draft,
             timeline=args.timeline,
@@ -94,6 +266,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             animation_version=args.animation_version,
             existing_audio=existing_audio,
         )
+        return _prepare_remediation(report, args, plan)
     if command == "commit":
         prepared_path = resolve_prepared_path(args.prepared)
         plan = unwrap_report(load_json(args.plan))
@@ -119,6 +292,11 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         return check_motion_reuse(unwrap_report(load_json(args.observation)), args.adjacent_window)
     if command == "audio-audit":
         return classify_audio_events(unwrap_report(load_json(args.observation)))
+    if command == "audit-bundle":
+        return build_audit_bundle(
+            unwrap_report(load_json(args.observation)),
+            adjacent_window=args.adjacent_window,
+        )
     if command == "resolve":
         plan = unwrap_report(load_json(args.plan))
         observation = unwrap_report(load_json(args.observation), "packaging_snapshot")
@@ -243,6 +421,9 @@ def _parser() -> argparse.ArgumentParser:
     motion.add_argument("--adjacent-window", type=int, default=1)
     audio_audit = sub.add_parser("audio-audit")
     audio_audit.add_argument("--observation", required=True)
+    audit_bundle = sub.add_parser("audit-bundle", help="run all read-only packaging checks over one timeline observation")
+    audit_bundle.add_argument("--observation", required=True, help="jianying_timeline_observation@1 JSON")
+    audit_bundle.add_argument("--adjacent-window", type=int, default=1)
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--plan", required=True)
     resolve.add_argument("--observation", required=True)
@@ -302,8 +483,18 @@ def main(argv: list[str] | None = None) -> int:
                         else "report output path conflicts with an input or prepared artifact"
                     )
                     args.out = None
+        elif args.command == "audit-bundle" and args.out:
+            resolved_observation = Path(args.observation).expanduser().resolve()
+            resolved_report = Path(args.out).expanduser().resolve()
+            if resolved_report == resolved_observation:
+                path_error = "report output path conflicts with observation input"
+                args.out = None
         if path_error:
-            report_type = "packaging_prepare" if args.command == "prepare" else "packaging_commit"
+            report_type = {
+                "prepare": "packaging_prepare",
+                "commit": "packaging_commit",
+                "audit-bundle": "packaging_audit_bundle",
+            }.get(args.command, "packaging_cli")
             report = result(report_type, input_errors=[path_error], status="blocked")
         else:
             report = _run(args)

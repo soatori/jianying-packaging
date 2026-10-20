@@ -467,6 +467,15 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         }
         self.assert_error_contains(plan, "no verified adapter mapping")
 
+    def test_subtitle_style_override_requires_verified_adapter_mapping(self) -> None:
+        plan = valid_plan()
+        plan["presets"][0]["allowed_overrides"].append("color")
+        plan["groups"][0]["visual"][0]["overrides"]["color"] = {
+            "mode": "absolute", "value": "#ffffff",
+        }
+
+        self.assert_error_contains(plan, "color: no verified adapter mapping")
+
     def test_copy_is_not_mutated_by_validation(self) -> None:
         plan = valid_plan()
         before = copy.deepcopy(plan)

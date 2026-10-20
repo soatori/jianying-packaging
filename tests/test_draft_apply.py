@@ -1378,6 +1378,35 @@ class DraftApplyTests(unittest.TestCase):
         self.assertEqual(intro["path"], inventory["entries"][0]["cache_path"])
         self.assertEqual(report["data"]["changes"][0]["animation_duration_us"], 1_840_000)
 
+    def test_text_intro_blocks_subtitle_material_without_verified_mapping(self):
+        source = draft_value()
+        source["materials"]["texts"][0]["type"] = "subtitle"
+        plan = plan_for_visual({
+            "operation": "copy_from_subtitle",
+            "object_type": "text",
+            "source_locator": {"timeline": "manual", "segment_id": "subtitle-q"},
+            "target_locator": {"timeline": "target", "track_id": "upper-track"},
+            "text": "Synthetic Q",
+            "text_ref": "U1",
+            "text_hash": text_hash("Synthetic Q"),
+            "duration_us": 1_840_000,
+            "animation": {"resource_id": "rid-shader", "duration_us": 1_840_000},
+        })
+        plan["execution"]["phase"] = "final"
+        inventory = {"entries": [{
+            "resource_id": "rid-shader", "effect_id": "effect-shader", "md5": "md5-shader",
+            "default_duration_us": 2_000_000, "cache_path": "cache/shader/md5-shader",
+            "render_type": "shader", "required_inputs": [],
+            "native_verified": True, "compatible_plain_text": True,
+        }]}
+
+        report = draft_apply.transform_packaging_plan(
+            source, plan, source_value=source, animation_inventory=inventory,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("TextIntro animations require a text material prototype" in error for error in report["errors"]))
+
     def test_text_intro_blocks_script_effect_without_words_input(self):
         source = draft_value()
         plan = plan_for_visual({

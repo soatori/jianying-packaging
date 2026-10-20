@@ -22,6 +22,11 @@ use these relationships:
 These reports are evidence for review. They do not select assets or write a
 Jianying draft.
 
+For a saved `jianying_timeline_observation@1`, use
+`packaging_tool.py audit-bundle --observation <workspace>/temp/jianying-analysis.json`
+to run snapshot, inventory, layer, motion, and audio checks in one process. Use
+the individual commands only when the request needs a narrower check.
+
 The schema 2.0 `prepare` phase also checks dialogue collisions before a sound
 write. It derives intervals only from recognized current-draft audio roles; if
 those roles do not identify dialogue, supply explicit intervals through

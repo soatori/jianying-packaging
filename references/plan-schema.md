@@ -215,6 +215,17 @@ Absolute scale overrides must be positive; absolute `start_us` values must be
 non-negative and absolute `duration_us` values must be positive. Relative
 values are checked during prepare against the current draft prototype.
 
+An allowed field is not enabled for every native material kind. Position and
+scale require confirmed transform prototypes on both the segment and its
+material. Text animation requires an underlying `material.type: "text"` plus
+same-version verified capability evidence; a native `subtitle` material is
+not treated as `text` and remains blocked until its field mapping is saved,
+read back, and visually verified in Jianying. Do not relabel a material or add
+`color`, raw `transform`, or animation fields to the direct override list to
+bypass this gate. Unsupported operations may use a project-local driver through
+the editor transaction API only after its prototype mapping is verified;
+otherwise leave them blocked.
+
 The adapter copies a template segment and its complete material closure from
 the current draft. A preset with one source segment needs no extra selector; if
 it declares multiple source segments, each `clone_template` visual operation

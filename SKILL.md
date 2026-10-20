@@ -12,6 +12,7 @@ Use this skill to audit a saved timeline or plan semantic emphasis and its visua
 - Owns emphasis selection, flower text, group layout, templates, motion, transitions, overlays, and sound rationale tied to visible events.
 - jianying-rough-cut owns transcript correction, speech cuts, semantic rewriting, and subtitle alignment. Return content errors there.
 - jianying-editor owns draft decoding, encryption, replica discovery, transactional backups, low-level writes, read-back, validation, and rollback. This skill owns the schema 2.0 prepare/commit adapter and invokes those existing transaction APIs; do not route packaging plans through `jianying-editor apply-plan`, which only applies `keep_blocks`.
+- “Represented by schema 2.0” requires a verified mapping for that property and material kind. Direct overrides stay within [references/plan-schema.md](references/plan-schema.md); a native `subtitle` material remains unsupported for text animation until same-version save/read-back and visual review verify the mapping.
 - The latest saved, user-confirmed timeline is authoritative for text, timing, segmentation, styles, layer order, visibility, and manual sound choices. Take one snapshot at the start of each analysis/plan pass and reuse it for that pass. Refresh only after a manual edit or detected source/target fingerprint change; never apply stale locators or restore removed choices.
 - Keep project names, copy, timecodes, IDs, assets, colors, and one-off style choices in external case references, not in this reusable skill.
 
@@ -56,13 +57,25 @@ Choose analysis by default; it is read-only and may run at any workflow state. O
 6. Run `prepare` once with `--prepared temp/prepared.json`, `--format text`, and `--out temp/prepare-report.json`. This validates the plan and source snapshot, persists the candidate, hashes, changes, and preview under the skill's `temp/`, and does not write a draft. Keep the compact terminal summary in context, then read the saved report to obtain `prepared_artifact_hash` and the report and prepared-artifact paths for later review. For layout or animation changes, open the reported HTML preview and review its text bounds, safe zone, position, track, alpha, and duration. Record `review_report.visual_preview_status: "approved"` and the exact `visual_preview_sha256` in the plan. For animation plans, pass `--animation-cache-root` when cache discovery is ambiguous; include same-version capability evidence with `--animation-capabilities` and identify the running version with `--animation-version` when it cannot be detected. For sound, pass the current case `--catalog` and `--pools`; if current audio roles do not identify dialogue, supply `--existing-audio <dialogue-intervals.json>`.
 7. Run `commit` only after the user approves that exact prepared-artifact hash and the required gates. Pass the hash from the prepare report as `--approved-prepared-hash`; do not reopen the artifact to recover the hash or rerun `prepare` while the plan and source snapshot remain unchanged. Commit reads and checks the approved artifact, plan, preview, and source snapshot before the clone-first transaction; it does not rebuild the candidate. Use `--format text --out temp/commit-report.json` to retain the full result while keeping the terminal summary concise. The HTML preview is geometry/timing evidence, not proof that Jianying retains or renders an effect. Reopen the result and complete visual/audio review.
 
-For a read-only evidence pass, use one saved observation and run only the
-requested checks that consume it. Batch independent commands such as
-`snapshot`, `inventory`, `layers`, `motion-check`, and `audio-audit` in one
-shell invocation, with distinct `--out` report paths and `--format text`. Keep
-the summaries and report paths for the next step; do not repeat a successful
-check on the same observation. If a check is blocked, correct its stated input
-or evidence before retrying.
+For a read-only evidence pass, capture the current timeline once with
+`python <EDITOR_ROOT>\scripts\jianying_project.py inspect <draft> --timeline active --analysis-out <workspace>\temp\jianying-analysis.json`,
+then run the five requested checks in one command:
+
+```powershell
+python scripts/packaging_tool.py audit-bundle --observation "<workspace>\temp\jianying-analysis.json" --format text --out "<workspace>\temp\packaging-audit.json"
+```
+
+Reuse the report while its source fingerprint is unchanged. An unavailable
+evidence category blocks its check and must not be read as zero events. If
+`prepare` is blocked by missing evidence, use `input_errors` for the missing
+field/file, expected shape, and rerun command; do not repeat it with unchanged
+inputs or fall back to bundled case assets. Individual checks remain available
+for legacy observation files.
+
+Keep each evidence, planning/review, and write/read-back round near a soft
+budget of 50 tool calls. Save the phase, source fingerprint, artifact paths,
+and pending gates before continuing. Use workspace `temp/` for case evidence
+and intermediate reports, and `outputs/` for user-facing deliverables.
 
 `stable` can be used to prepare a review plan. Any staging or final commit
 requires `source.content_pass: approved` and
