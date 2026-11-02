@@ -133,7 +133,7 @@ def _visual_preview_model(
     value: dict[str, Any],
     plan: dict[str, Any],
     operations: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any] | None]],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], list[str]]:
     profile = plan.get("project_profile") if isinstance(plan.get("project_profile"), dict) else {}
     width, height = profile.get("canvas_width"), profile.get("canvas_height")
     if isinstance(width, bool) or not isinstance(width, int) or width <= 0 or isinstance(height, bool) or not isinstance(height, int) or height <= 0:
@@ -158,6 +158,7 @@ def _visual_preview_model(
         safe_zones.append(zones_by_group[group_id])
 
     layout_check: dict[str, list[dict[str, Any]]] = {}
+    warnings: list[str] = []
     for index, (group, visual, segment, material) in enumerate(operations):
         if visual.get("object_type") != "text" or not isinstance(material, dict):
             continue
@@ -224,10 +225,21 @@ def _visual_preview_model(
         slots.append(slot)
 
     for group_id, group_slots in layout_check.items():
-        fitted = fit_slots_to_safe_zone(group_slots, zones_by_group[group_id]["bounds"])
+        group_layout = groups[group_id].get("layout") if isinstance(groups[group_id].get("layout"), dict) else {}
+        constraints = group_layout.get("constraints") if isinstance(group_layout.get("constraints"), dict) else {}
+        fitted = fit_slots_to_safe_zone(
+            group_slots,
+            zones_by_group[group_id]["bounds"],
+            collision_policy=constraints.get("collision"),
+        )
+        if constraints.get("collision") == "warn":
+            warnings.extend(
+                f"group {group_id}: measured text overlap between {item['first_id']} and {item['second_id']}"
+                for item in fitted["collisions"]
+            )
         if fitted["shift_x"] or fitted["shift_y"]:
             raise DraftApplyError(f"group {group_id}: final overrides place text outside the numeric safe zone")
-    return {"canvas_width": width, "canvas_height": height, "safe_zones": safe_zones, "slots": slots}
+    return {"canvas_width": width, "canvas_height": height, "safe_zones": safe_zones, "slots": slots}, warnings
 
 
 def _new_id() -> str:
@@ -1365,7 +1377,17 @@ def _apply_final_layouts(
         if not layout_items:
             continue
         try:
-            fitted = fit_slots_to_safe_zone(layout_items, safe_zone)["slots"]
+            fitted_report = fit_slots_to_safe_zone(
+                layout_items,
+                safe_zone,
+                collision_policy=constraints.get("collision"),
+            )
+            if constraints.get("collision") == "warn":
+                warnings.extend(
+                    f"group {group_id}: measured text overlap between {item['first_id']} and {item['second_id']}"
+                    for item in fitted_report["collisions"]
+                )
+            fitted = fitted_report["slots"]
         except VisualPreviewError as exc:
             errors.append(f"group {group_id}: {exc}")
             continue
@@ -1798,7 +1820,8 @@ def transform_packaging_plan(
     preview_model = None
     if _requires_visual_preview(plan):
         try:
-            preview_model = _visual_preview_model(candidate, plan, operations)
+            preview_model, preview_warnings = _visual_preview_model(candidate, plan, operations)
+            warnings.extend(item for item in preview_warnings if item not in warnings)
         except (DraftApplyError, KeyError, TypeError, ValueError) as exc:
             return result("packaging_draft_transform", errors=[str(exc)], warnings=warnings)
     return result(

@@ -24,12 +24,20 @@ from packaging_tools.draft_apply import (
     resolve_prepared_path,
 )
 from packaging_tools.layer_discovery import discover_packaging_layers
+from packaging_tools.cover_check import check_covered_originals
 from packaging_tools.learning import build_learning_report, validate_learning_report
 from packaging_tools.motion_check import check_motion_reuse
 from packaging_tools.layout_resolver import resolve_relative_layout
 from packaging_tools.reference_diff import diff_manual_reference
 from packaging_tools.result import exit_code, result
 from packaging_tools.snapshot import build_packaging_snapshot
+from packaging_tools.field_tools import (
+    build_animation_inventory_report,
+    build_layer_audit,
+    expand_plan,
+    harvest_catalog,
+    validate_capabilities,
+)
 from packaging_tools.sound_check import check_sound_operations
 from packaging_tools.subtitle_resolver import resolve_subtitle_anchor, resolve_text_hashes
 from packaging_tools.text_ops import check_text_replacement
@@ -190,9 +198,82 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         if args.kind == "learning":
             report = validate_learning_report(unwrap_report(load_json(args.path)))
             return result("learning_report_validation", data=report, errors=report.get("errors", []), input_errors=report.get("input_errors", []), warnings=report.get("warnings", []), summary=report.get("summary", {}))
+        if args.kind == "capabilities":
+            return validate_capabilities(
+                load_json(args.path), current_version=args.animation_version
+            )
         if args.kind == "generic":
             report = check_generic_content(args.paths, args.forbid)
             return result("packaging_generic_content_validation", data=report, errors=report.get("errors", []), input_errors=report.get("input_errors", []), warnings=report.get("warnings", []))
+    if command == "animation-inventory":
+        if len(args.observations or []) > 5:
+            return result(
+                "packaging_animation_inventory",
+                errors=["at most 5 reference observations may be supplied"],
+            )
+        enum_entries = unwrap_report(load_json(args.enum)) if args.enum else []
+        if isinstance(enum_entries, dict):
+            enum_entries = enum_entries.get("entries") or enum_entries.get("animations") or []
+        observations = [unwrap_report(load_json(path)) for path in args.observations or []]
+        return build_animation_inventory_report(
+            args.cache_root,
+            enum_entries,
+            jianying_version=args.animation_version,
+            capabilities=unwrap_report(load_json(args.capabilities)) if args.capabilities else None,
+            observations=observations,
+            keywords=args.keywords or "",
+        )
+
+    if command == "catalog-harvest":
+        if len(args.observations) > 5:
+            return result(
+                "packaging_catalog_harvest",
+                errors=["at most 5 reference observations may be supplied"],
+            )
+        return harvest_catalog(
+            [unwrap_report(load_json(path)) for path in args.observations],
+            kinds=args.kinds,
+            max_items=args.max_items,
+            note=args.note,
+            cache_root=args.cache_root,
+        )
+
+    if command == "expand-plan":
+        report = expand_plan(
+            unwrap_report(load_json(args.plan)),
+            animation_resource_id=args.animation,
+            duration_mode=args.duration_mode,
+            head_us=args.head_us,
+            follow_us=args.follow_us,
+            explicit_us=args.explicit_us,
+            clamp_to_row=not args.no_clamp,
+            motion_role=args.motion_role,
+        )
+        if args.out_plan and report.get("ok"):
+            write_json(Path(args.out_plan), report["data"]["expanded_plan"])
+            report["data"]["report"]["out_plan"] = str(args.out_plan)
+        return report
+
+    if command == "layer-audit":
+        def band(value: str, default: tuple[float, float]) -> tuple[float, float]:
+            try:
+                low, high = value.split(":")
+                return (float(low), float(high))
+            except (ValueError, AttributeError):
+                return default
+
+        from packaging_tools.field_tools import MIX_BANDS
+
+        return build_layer_audit(
+            unwrap_report(load_json(args.observation)),
+            kinds=args.kinds,
+            music_vol=band(args.music_vol, MIX_BANDS["music"]),
+            sfx_vol=band(args.sfx_vol, MIX_BANDS["sfx"]),
+            dialogue_vol=band(args.dialogue_vol, MIX_BANDS["dialogue"]),
+            transition_max_us=args.transition_max_us,
+            max_chars_per_line=args.max_chars_per_line,
+        )
+
     if command == "prepare":
         plan = unwrap_report(load_json(args.plan))
         if _has_sound_operations(plan):
@@ -271,7 +352,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         prepared_path = resolve_prepared_path(args.prepared)
         plan = unwrap_report(load_json(args.plan))
         prepared = load_json(prepared_path)
-        return commit_prepared_packaging(
+        report = commit_prepared_packaging(
             plan,
             prepared,
             approved_prepared_hash=args.approved_prepared_hash,
@@ -280,6 +361,31 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             editor_root=_editor_root(args.editor_root),
             prepared_path=prepared_path,
         )
+        # Automatic covered-original guard (staging reference step 6b):
+        # a freshly committed clone must not silently leave copies stacked on
+        # visible originals. Findings are surfaced as warnings for staging and
+        # as blocking errors for final phase commits.
+        data = report.get("data") if isinstance(report.get("data"), dict) else {}
+        target_id = data.get("target_timeline_id")
+        if report.get("ok") and target_id:
+            cover = check_covered_originals(
+                args.draft, timeline=str(target_id), timeline_id=str(target_id),
+                editor_root=_editor_root(args.editor_root) and str(_editor_root(args.editor_root)),
+            )
+            cover_data = cover.get("data") if isinstance(cover.get("data"), dict) else {}
+            duplicates = cover_data.get("duplicates") or []
+            if duplicates:
+                note = ("%d visible covered original row(s) remain under upper-track copies after this commit; "
+                        "per references/staging-and-covered-subtitles.md step 6b, disable them on the clone in this "
+                        "same pass or record the pending approval explicitly." % len(duplicates))
+                if str(data.get("phase") or plan.get("execution", {}).get("phase")) == "final":
+                    report.setdefault("errors", []).append(note)
+                    report["ok"] = False
+                    report["status"] = "blocked"
+                else:
+                    report.setdefault("warnings", []).append(note)
+                data["covered_original_check"] = cover_data
+        return report
     if command == "snapshot":
         return build_packaging_snapshot(unwrap_report(load_json(args.observation)))
     if command == "diff":
@@ -332,6 +438,19 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         )
     if command == "text-check":
         return check_text_replacement(load_json(args.prototype), load_json(args.replacement))
+    if command == "cover-check":
+        report = check_covered_originals(
+            args.draft,
+            timeline=args.timeline,
+            editor_root=str(_editor_root(args.editor_root)),
+            dll_path=args.dll,
+            tolerance_us=args.tolerance_us,
+        )
+        if args.fail_on_visible and (report.get("data") or {}).get("visible_covered_duplicates"):
+            report.setdefault("errors", []).extend(report.get("warnings", []))
+            report["ok"] = False
+            report["status"] = "blocked"
+        return report
     if command == "learning-report":
         entries = unwrap_report(load_json(args.entries))
         return build_learning_report(entries, source_kind=args.source_kind, case_ref=args.case_ref)
@@ -382,9 +501,56 @@ def _parser() -> argparse.ArgumentParser:
     sound = validate_sub.add_parser("sound", help="validate a sound catalog and optional pools")
     sound.add_argument("path")
     sound.add_argument("--pools")
+    capabilities = validate_sub.add_parser("capabilities", help="validate an animation capability file")
+    capabilities.add_argument("path")
+    capabilities.add_argument("--animation-version", help="current Jianying version for the strict equality check")
     generic = validate_sub.add_parser("generic", help="scan generic skill content")
     generic.add_argument("paths", nargs="+")
     generic.add_argument("--forbid", action="append", default=[])
+
+    animation_inventory = sub.add_parser(
+        "animation-inventory", help="list locally usable text entrance animations and mark candidates unverified"
+    )
+    animation_inventory.add_argument("--cache-root", help="Jianying Cache directory; auto-detection is not attempted")
+    animation_inventory.add_argument("--enum", help="JSON array of TextIntro entries")
+    animation_inventory.add_argument("--animation-version", help="current Jianying version")
+    animation_inventory.add_argument("--capabilities", help="existing capability file to mark verified entries")
+    animation_inventory.add_argument("--observations", nargs="*", default=[],
+                                     help="explicit reference-draft observations (max 5)")
+    animation_inventory.add_argument("--keywords", default="", help="comma separated name filter")
+
+    harvest = sub.add_parser(
+        "catalog-harvest", help="harvest sound/animation candidates from explicit reference drafts"
+    )
+    harvest.add_argument("--observations", nargs="+", required=True)
+    harvest.add_argument("--cache-root")
+    harvest.add_argument("--kinds", choices=("sound", "animation", "both"), default="both")
+    harvest.add_argument("--max-items", type=int, default=200)
+    harvest.add_argument("--note")
+
+    expand = sub.add_parser(
+        "expand-plan", help="expand animation references into explicit durations before prepare"
+    )
+    expand.add_argument("--plan", required=True)
+    expand.add_argument("--animation", help="resource_id applied to visuals that omit one")
+    expand.add_argument("--duration-mode", choices=("head_follow", "uniform", "explicit"), default="head_follow")
+    expand.add_argument("--head-us", type=int, default=400000)
+    expand.add_argument("--follow-us", type=int, default=240000)
+    expand.add_argument("--explicit-us", type=int)
+    expand.add_argument("--no-clamp", action="store_true", help="do not clamp to the visible row window")
+    expand.add_argument("--motion-role", choices=("uniform_entry", "emphasis", ""), default="uniform_entry")
+    expand.add_argument("--out-plan", help="write the expanded plan to this path")
+
+    layer = sub.add_parser(
+        "layer-audit", help="audit music, transitions, overlays, effects and text against mix/layout bands"
+    )
+    layer.add_argument("--observation", required=True)
+    layer.add_argument("--kinds", default="music,transition,overlay,effect,text_animation")
+    layer.add_argument("--music-vol", default="0.35:0.45")
+    layer.add_argument("--sfx-vol", default="0.45:0.55")
+    layer.add_argument("--dialogue-vol", default="0.90:1.00")
+    layer.add_argument("--transition-max-us", type=int, default=600000)
+    layer.add_argument("--max-chars-per-line", type=int, default=13)
 
     prepare = sub.add_parser("prepare", help="validate a plan and persist its candidate without draft writes")
     prepare.add_argument("--draft", required=True)
@@ -440,6 +606,14 @@ def _parser() -> argparse.ArgumentParser:
     text_check = sub.add_parser("text-check")
     text_check.add_argument("--prototype", required=True)
     text_check.add_argument("--replacement", required=True)
+
+    cover = sub.add_parser("cover-check", help="report subtitle originals still visible under upper-track copies")
+    cover.add_argument("--draft", required=True)
+    cover.add_argument("--timeline", default="active", help="timeline selector (a staging clone is typical)")
+    cover.add_argument("--tolerance-us", type=int, default=40000, help="start-time tolerance for duplicate matching")
+    cover.add_argument("--fail-on-visible", action="store_true", help="exit 1 when any visible covered duplicate remains")
+    cover.add_argument("--editor-root", help="jianying-editor skill root")
+    cover.add_argument("--dll", help="explicit videoeditor.dll path for encrypted drafts")
 
     learning = sub.add_parser("learning-report")
     learning.add_argument("--entries", required=True)

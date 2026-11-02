@@ -1,0 +1,18 @@
+{
+  "_comment": "Example ONLY. Replace every placeholder with values observed on THIS machine, then reopen a project and confirm the animation renders on plain text before promoting status to visually_verified. validate capabilities checks the tokens; it cannot check that you actually looked.",
+  "jianying_version": "<the exact version string of the installed editor, e.g. 11.6.0>",
+  "verified": [
+    {
+      "resource_id": "<TextIntro resource_id, exact>",
+      "md5": "<md5 of the exact Cache/effect/<resource_id>/<md5> directory>",
+      "target_kind": "plain_text",
+      "status": "visually_verified",
+      "required_inputs": [],
+      "evidence": {
+        "reopened": true,
+        "reviewed_on": "<YYYY-MM-DD>",
+        "notes": "<display name and what was actually observed after reopening>"
+      }
+    }
+  ]
+}

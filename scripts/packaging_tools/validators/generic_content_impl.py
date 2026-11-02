@@ -36,8 +36,10 @@ def scan(
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
+            except OSError as exc:
+                raise OSError(f"cannot read generic-content file {path}: {exc}") from exc
+            except UnicodeError as exc:
+                raise UnicodeError(f"cannot decode generic-content file {path}: {exc}") from exc
             for name, pattern in PATTERNS.items():
                 if pattern.search(text):
                     findings.append(f"{path}: {name}")

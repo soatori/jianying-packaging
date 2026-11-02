@@ -282,6 +282,18 @@ def synthetic_sound_pools() -> dict[str, Any]:
     }
 
 
+def typing_sound_inputs() -> tuple[dict[str, Any], dict[str, Any]]:
+    catalog = synthetic_sound_catalog()
+    for preset in catalog["presets"]:
+        preset["sound_form"] = "typing"
+        preset["default_trim_policy"] = "motion_span"
+    pools = synthetic_sound_pools()
+    for pool in pools["pools"]:
+        for candidate in pool["candidates"]:
+            candidate["sound_form"] = "typing"
+    return catalog, pools
+
+
 def validate_for_test(plan: dict[str, Any]) -> tuple[list[str], list[str]]:
     if plan.get("schema_version") == "2.0":
         return VALIDATOR.validate_plan(
@@ -624,6 +636,28 @@ class ValidatePackagingPlanTests(unittest.TestCase):
         audio["text_range"] = {"start_us": 1000, "duration_us": 3000}
         audio["target_range"] = {"start_us": 1000, "duration_us": 500}
         self.assert_error_contains(plan, "must equal motion_event")
+
+    def test_typing_sound_form_accepts_motion_span(self) -> None:
+        plan = valid_plan_v20()
+        audio = plan["groups"][0]["audio"]
+        audio["sound_form"] = "typing"
+        audio["trim_policy"] = "motion_span"
+        event = plan["groups"][0]["motion_event"]
+        audio["target_range"] = {"start_us": event["start_us"], "duration_us": event["end_us"] - event["start_us"]}
+        catalog, pools = typing_sound_inputs()
+
+        errors, _ = VALIDATOR.validate_plan(plan, sound_catalog=catalog, sound_pools=pools)
+
+        self.assertEqual(errors, [])
+
+    def test_typing_sound_form_requires_motion_span(self) -> None:
+        plan = valid_plan_v20()
+        plan["groups"][0]["audio"]["sound_form"] = "typing"
+        catalog, pools = typing_sound_inputs()
+
+        errors, _ = VALIDATOR.validate_plan(plan, sound_catalog=catalog, sound_pools=pools)
+
+        self.assertTrue(any("typing" in error and "motion_span" in error for error in errors))
 
     def test_known_leading_silence_requires_source_range(self) -> None:
         plan = valid_plan_v20()

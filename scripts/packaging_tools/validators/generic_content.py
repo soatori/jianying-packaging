@@ -25,6 +25,6 @@ def check_generic_content(paths: list[str | Path], forbidden_literals: list[str]
         }
     try:
         errors = scan(roots, forbidden_literals=forbidden_literals)
-    except OSError as exc:
-        return {"ok": False, "errors": [], "input_errors": [f"generic-content root is not readable: {exc}"], "warnings": []}
+    except (OSError, UnicodeError) as exc:
+        return {"ok": False, "errors": [], "input_errors": [f"generic-content input is not readable: {exc}"], "warnings": []}
     return {"ok": not errors, "errors": errors, "input_errors": [], "warnings": []}

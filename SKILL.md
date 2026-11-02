@@ -12,9 +12,10 @@ Use this skill to audit a saved timeline or plan semantic emphasis and its visua
 - Owns emphasis selection, flower text, group layout, templates, motion, transitions, overlays, and sound rationale tied to visible events.
 - jianying-rough-cut owns transcript correction, speech cuts, semantic rewriting, and subtitle alignment. Return content errors there.
 - jianying-editor owns draft decoding, encryption, replica discovery, transactional backups, low-level writes, read-back, validation, and rollback. This skill owns the schema 2.0 prepare/commit adapter and invokes those existing transaction APIs; do not route packaging plans through `jianying-editor apply-plan`, which only applies `keep_blocks`.
-- “Represented by schema 2.0” requires a verified mapping for that property and material kind. Direct overrides stay within [references/plan-schema.md](references/plan-schema.md); a native `subtitle` material remains unsupported for text animation until same-version save/read-back and visual review verify the mapping.
+- Packaging an existing draft uses the CLI/JSON-plan workflow: validate a schema 2.0 plan and use `prepare`/`commit`; do not create a one-off Python driver for an operation represented by the plan schema.
+- “Represented by schema 2.0” means the exact property and material kind have a verified adapter mapping. Direct overrides remain limited to the fields in [references/plan-schema.md](references/plan-schema.md); position/scale also require both segment and material transform prototypes. Text animation requires a `text` material and same-version capability evidence. A native `subtitle` material is not coerced to `text` and remains unsupported by this animation adapter until a same-version save/read-back and visual review verify it. For an unsupported operation, use a project-local driver through the editor transaction API only when its prototype and mapping are verified; otherwise keep the operation blocked. A style property simply absent from the whitelist (color, font size, transform, entry animation on a native `subtitle` copy) belongs to this driver route by definition, so "do not create a one-off Python driver" does not forbid it; never relabel a `subtitle` material as `text` to force the plan adapter, and never hand-roll `draft_content.json` writes outside the transaction API.
 - The latest saved, user-confirmed timeline is authoritative for text, timing, segmentation, styles, layer order, visibility, and manual sound choices. Take one snapshot at the start of each analysis/plan pass and reuse it for that pass. Refresh only after a manual edit or detected source/target fingerprint change; never apply stale locators or restore removed choices.
-- Keep project names, copy, timecodes, IDs, assets, colors, and one-off style choices in external case references, not in this reusable skill.
+- Keep project names, copy, timecodes, IDs, assets, colors, and one-off style choices in external case references, not in this reusable skill. A case reference is the project's own on-disk instructions file (its `AGENTS.md`, or the preview/design cards beside it); it holds material inventory (asset index, reference batches, source volumes), the approved style ladder for that client, and per-project exceptions. Load it at task start when the request points at that project, and never promote its values back into this skill.
 
 ## Emphasis selection
 
@@ -35,11 +36,28 @@ Read each complete sentence with its neighboring context and the video's communi
 ### Dialogue-aware selection
 
 - Read speaker and turn roles from the approved rough-cut/subtitle handoff. Treat a host preamble, the actual question, and the guest answer as separate semantic units unless the user explicitly approves another grouping.
-- Select complete questions and answers according to the requested scope and emphasis density. When the brief calls for question-and-answer framing, keep selected questions and answers as separate key groups; do not automatically promote every question or impose a fixed answer-group count.
+- Select complete questions and answers according to the requested emphasis mode (`restraint` default, `qa_framing`, or `dense_coverage`). Under `qa_framing` keep selected questions and answers as separate key groups; the number of answer groups follows the material, never a fixed quota. Under `restraint` do not promote a unit because its sentence happens to be a question — the promotion reason must always be semantic. Modes share one rule: no unit is promoted for its sentence pattern alone.
 - Use opening or ending theme groups when they serve the video's message. Review spacing between selected groups without adding emphasis solely to meet a fixed cadence.
 - Record `group_kind`, `speaker_context`, and `sentence_count` in review artifacts. A group normally contains 1–3 complete sentences and should be labeled `句1/2` when it contains two.
 
 For semantic categories, levels, grouping, and sound rationale, read [references/semantic-packaging.md](references/semantic-packaging.md).
+
+## Layer support matrix
+
+Not every layer in a finished video is writable through schema 2.0. Know which
+route an operation takes before promising it:
+
+| Layer | Route | Status |
+| --- | --- | --- |
+| Emphasis text, flower text, layout, same-screen retrack | schema 2.0 plan + `prepare`/`commit` | supported |
+| Entry animation on plain text | plan `animation: {resource_id, duration_us}` + same-version capability evidence | supported; batch it with `expand-plan` |
+| Sound effects tied to motion | plan `group.audio` + case catalog/pools | supported |
+| Background music bed | plan `music[]` + fade/volume bands | supported (validate with `layer-audit`) |
+| Overlay / B-roll (second video track) | editor `add_overlay` / `clone_asset` driver | driver route, needs a same-version prototype |
+| Transitions, colour effects (`materials.effects`) | driver route only | **read-only audit today**; a plan field for these does not exist |
+
+`layer-audit` reads music, transitions, overlays, effects and text from a
+snapshot and reports mix/width violations. It never writes.
 
 ## Modes and workflow
 
@@ -55,7 +73,8 @@ Choose analysis by default; it is read-only and may run at any workflow state. O
 4. Group related text and graphic layers by perceptual event. Resolve layout from the approved subtitle transform and a verified reference; do not guess raw Jianying coordinates, color fields, or effect IDs.
 5. Build a schema 2.0 plan. Use `validate plan` while iterating or when the user requests validation only. For a write-ready candidate, `prepare` performs the final plan and current-source validation; do not run `validate plan` again on the same unchanged plan immediately before `prepare`. When sound is in scope, supply the current case's verified `--catalog <case-catalog.json>` and `--pools <case-pools.json>`; missing inputs remain unresolved and never fall back to bundled assets.
 6. Run `prepare` once with `--prepared temp/prepared.json`, `--format text`, and `--out temp/prepare-report.json`. This validates the plan and source snapshot, persists the candidate, hashes, changes, and preview under the skill's `temp/`, and does not write a draft. Keep the compact terminal summary in context, then read the saved report to obtain `prepared_artifact_hash` and the report and prepared-artifact paths for later review. For layout or animation changes, open the reported HTML preview and review its text bounds, safe zone, position, track, alpha, and duration. Record `review_report.visual_preview_status: "approved"` and the exact `visual_preview_sha256` in the plan. For animation plans, pass `--animation-cache-root` when cache discovery is ambiguous; include same-version capability evidence with `--animation-capabilities` and identify the running version with `--animation-version` when it cannot be detected. For sound, pass the current case `--catalog` and `--pools`; if current audio roles do not identify dialogue, supply `--existing-audio <dialogue-intervals.json>`.
-7. Run `commit` only after the user approves that exact prepared-artifact hash and the required gates. Pass the hash from the prepare report as `--approved-prepared-hash`; do not reopen the artifact to recover the hash or rerun `prepare` while the plan and source snapshot remain unchanged. Commit reads and checks the approved artifact, plan, preview, and source snapshot before the clone-first transaction; it does not rebuild the candidate. Use `--format text --out temp/commit-report.json` to retain the full result while keeping the terminal summary concise. The HTML preview is geometry/timing evidence, not proof that Jianying retains or renders an effect. Reopen the result and complete visual/audio review.
+When a sound or animation evidence gate blocks `prepare`, use its `input_errors` to identify the missing file/field, required JSON shape, and rerun command. Correct that input once; do not repeat `prepare` with unchanged evidence or fall back to bundled case assets.
+7. Run `commit` only after the user approves that exact prepared-artifact hash and the required gates. Pass the hash from the prepare report as `--approved-prepared-hash`; do not reopen the artifact to recover the hash or rerun `prepare` while the plan and source snapshot remain unchanged. Commit reads and checks the approved artifact, plan, preview, and source snapshot before the clone-first transaction; it does not rebuild the candidate. Use `--format text --out temp/commit-report.json` to retain the full result while keeping the terminal summary concise. The HTML preview is geometry/timing evidence, not proof that Jianying retains or renders an effect. Reopen the result and complete visual/audio review. **A staging commit is not delivered until covered originals are resolved in the same pass**: with a standing user "复制即替换" instruction, disable the covered originals on the clone immediately (backup + read-back, report the disabled IDs); otherwise surface the pending decision explicitly. Never hand back a doubled staging view with no stated decision — see `references/staging-and-covered-subtitles.md` step 6b.
 
 For a read-only evidence pass, capture the current timeline once with
 `python <EDITOR_ROOT>\scripts\jianying_project.py inspect <draft> --timeline active --analysis-out <workspace>\temp\jianying-analysis.json`,
@@ -65,17 +84,65 @@ then run the five requested checks in one command:
 python scripts/packaging_tool.py audit-bundle --observation "<workspace>\temp\jianying-analysis.json" --format text --out "<workspace>\temp\packaging-audit.json"
 ```
 
-Reuse the report while its source fingerprint is unchanged. An unavailable
-evidence category blocks its check and must not be read as zero events. If
-`prepare` is blocked by missing evidence, use `input_errors` for the missing
-field/file, expected shape, and rerun command; do not repeat it with unchanged
-inputs or fall back to bundled case assets. Individual checks remain available
-for legacy observation files.
+The full JSON file contains each check and the source fingerprint; stdout is a
+short summary. Reuse the report while the fingerprint is unchanged. An
+unavailable evidence category blocks its check and must not be read as zero
+events. For legacy observation files, the individual `snapshot`, `inventory`,
+`layers`, `motion-check`, and `audio-audit` commands remain available and can
+be batched in one shell invocation.
 
-Keep each evidence, planning/review, and write/read-back round near a soft
-budget of 50 tool calls. Save the phase, source fingerprint, artifact paths,
-and pending gates before continuing. Use workspace `temp/` for case evidence
-and intermediate reports, and `outputs/` for user-facing deliverables.
+Keep each evidence, plan/review, and write/read-back round near a soft budget
+of 50 tool calls. Save the current phase, source fingerprint, artifact paths,
+and pending gates before continuing; do not rerun checks for unchanged inputs.
+Use workspace `temp/` for case evidence and intermediate reports, and `outputs/`
+for user-facing deliverables. `--prepared` remains in the packaging tool's
+protected temp root for the transaction. A local project folder that the host's
+present whitelist does not cover (an `AGENTS.md` working directory, a preview-card
+directory, the draft volume itself) is not a delivery surface: copy the review
+files into the conversation's `outputs/` before presenting them, or the user gets
+an inert path instead of a card.
+
+Sound is its own round: place SFX only after the layout/animation preview has been
+approved and committed. Mixing audio with a geometry change in one write makes a
+"the sound repeats" complaint impossible to separate from a position change, and
+the audio plan has its own evidence gates (beat membership, reuse cap, measured
+leading silence).
+
+### Preview deliverable gate
+
+Preview form and timing follow the workflow stage; never mix them.
+
+- Rough-cut, transcript, speech-cut, and subtitle stages deliver text only — an
+  SRT file or a line-by-line list. Do not generate a picture preview at these
+  stages; a preview there is noise, not evidence.
+- Only packaging-stage decisions get a picture preview, and the form depends on
+  which decision is under review:
+  - *Which sentences are key sentences* (selection, grouping, level, coverage):
+    deliver the **emphasis-selection preview** — one self-contained dark HTML
+    page listing every current subtitle row in time order, each carrying its
+    group id, level, main-vs-reserve state, and profile/fragment/text-edit flags,
+    so the reviewer can audit coverage and what was dropped rather than only the
+    picks. This is a review list, not an animation. See
+    `references/semantic-packaging.md` "Emphasis selection preview".
+  - *How an approved group looks on screen* (flower text, position, angle):
+    build it as one screen per group — a black-background frame card or a
+    single-canvas HTML page — navigable by group number. Do not add a play bar
+    or scrubber, and do not composite the reference clip behind the text; the
+    reviewer is judging title layout, not motion.
+- Every packaging write is preview-gated, including a "non-destructive" style-only
+  pass that only changes color, font size, scale, or entry animation. Show the
+  preview and take the user's approval before `prepare`/`commit`; never write
+  first and backfill the preview afterward. This user-facing review card is
+  separate from the tool-generated geometry HTML in step 6, which is commit
+  evidence rather than the review deliverable.
+
+### Simultaneous subtitle track handling
+
+When two approved key sentences must remain visible together, keep both subtitle strings and text hashes exactly as approved. Let A be the earlier subtitle segment and B the later one. Keep A's start and extend its timeline duration through B's end; keep B's original start and duration. This changes segment timing, not text. On a final clone, extend A with `modify_segment` and an absolute `overrides.duration_us`; in a staging copy, use the exact-text copies' per-visual `start_us`/`duration_us`. Never use `modify_text` or shorten either sentence.
+
+Because A now occupies its track through B's end, place B on a distinct upper text track for the overlapping interval. Preserve B's original target range and exact text/hash by setting its per-visual `start_us` and `duration_us` explicitly; do not let it inherit the wider group range. The adapter can create a text track from a verified text-track prototype for subtitle copies; for a final clone, realize the move by copying B to the upper track and disabling the covered original B row. Auxiliary text still follows the existing-topmost-track rule.
+
+Set the group's range from A's start through B's end and mark it with `same_screen.enabled: true`, `extend_to_group_end: true`, and `overlap_policy: "separate_upper_tracks"`. A timeline track selects a lane and render order, not on-screen position; map the two exact text segments to separate approved layout slots so they remain readable together. Staging copies the exact subtitles and leaves source rows visible. In the approved final clone, hide only original rows fully covered by their exact-text copies. Never hide or alter source-timeline rows. Read back A's extended duration, B's preserved range, both track IDs, text hashes, and render order; if any mapping is ambiguous, stop for review.
 
 `stable` can be used to prepare a review plan. Any staging or final commit
 requires `source.content_pass: approved` and
@@ -145,20 +212,22 @@ A manual edit to the current saved timeline invalidates the previous plan and gr
 
 Run these checks against the current saved timeline, not against an earlier exported SRT or plan.
 
-1. **Selection review:** confirm group count, complete-sentence boundaries, speaker/turn labels, selected question and answer groups against the requested scope and emphasis density, opening/ending choices, and timing-gap balance.
+1. **Selection review:** confirm group count, complete-sentence boundaries, speaker/turn labels, selected question and answer groups against the requested scope and emphasis density, opening/ending choices, and timing-gap balance. Present this as the emphasis-selection preview HTML (all rows, coverage, drop/reserve, flags) described in `references/semantic-packaging.md`.
 2. **Text review:** compare every staged text hash with the approved subtitle reference; verify `句N/M` labels and that no semantic unit was rewritten.
-3. **Same-screen review:** for each group inspect the first frame, a middle frame, and the final frame. Confirm every intended line is visible at the group end, there is no same-track overlap, and manual transforms were preserved.
+3. **Same-screen review:** for each group inspect the first frame, the overlap start, a middle frame, and the final frame. Confirm A lasts through B's end, B keeps its approved start/duration on a distinct upper timeline track, both exact subtitle lines use separate layout slots, no text bounds collide, and manual transforms were preserved.
 4. **Covered-subtitle review:** on the source timeline, originals remain unchanged. On an explicitly approved clone, only covered originals may be hidden; verify `visible=false` by read-back and by preview.
 5. **Editor review:** run `jianying-editor validate`, verify every replica, source hash preservation, backup presence, and plan/read-back equality.
 6. **Preview review:** use `jianying-preview frame` or `shot` at group start/middle/end. Stop on text mismatch, unexpected layer addition/removal, collision, obstruction, or a source-timeline change.
 
-Record the selected review times, observed layer counts, track assignments, backup path, and any unresolved speaker/listening issue in the review report.
+Record the selected review times, observed layer counts, source-to-target track assignments, target intervals, backup path, and any unresolved speaker/listening issue in the review report.
 
 ## Motion, sound, and review gates
 
-- Keep motion traceable to a user-approved template or verified source, and vary among reference-backed choices within the plan reuse cap. Do not invent support for raw properties from field names alone.
+- Keep motion traceable to a user-approved template or verified source, and vary among reference-backed choices within the plan reuse cap. Do not invent support for raw properties from field names alone. Reuse caps by role: `uniform_entry` (one resource, same duration, first row of each group) has **no count limit** but must use a single resource id across the whole plan; `emphasis` is capped at **2 uses per resource per region**, with no adjacent repeat and no A-B-A run.
 - Treat each perceptual motion beat as an event. Co-timed layers share one event and normally one primary sound; separate entrances or moving marks are separate events.
-- Match sound to event meaning and motion. Follow the task's full/selective coverage and repetition policy; do not infer coverage from segment/audio counts. Align the first audible transient to the perceptual landing and account for measured leading silence.
+- Match sound to event meaning and motion. Follow the task's full/selective coverage and repetition policy; do not infer coverage from segment/audio counts. Pick the anchor policy per event, not globally: a per-row entrance anchors on the animation **start** (a 200–400 ms fade has no independent perceptual landing), a one-shot transition anchors on its **midpoint**, a scale/impact hit anchors on the **peak**, and an overlay entering the frame anchors on the layer start. Record `anchor_policy` and `anchor_basis` for every audio event. Account for measured leading silence either way.
+- Sound reuse default is **2 uses per preset** (`sound_selection.reuse_cap` defaults to 2 in both the validator and the sound check), with no repeat on the adjacent beat and none two beats away. Raising it requires a recorded reason per event.
+- Background music is its own layer: place it through `music[]`, keep it inside the mix bands, and always fade it in and out. Dialogue is never ducked for music on an interview.
 - Classify music, ambience, dialogue, SFX, and unknown audio separately. Resolve unknown roles and dialogue collisions by review.
 - Check animated marks and overlapping text at entry, peak, and exit; static transforms do not prove readability.
 - Preserve the narration track's role and do not attach emphasis animation to it. Follow approved layer order and extension-hold behavior.
@@ -175,7 +244,8 @@ Read only what the requested operation needs:
 
 - Track copying, covered subtitles, or staging: [references/staging-and-covered-subtitles.md](references/staging-and-covered-subtitles.md).
 - Layout or animated positioning: [references/layout-templates.md](references/layout-templates.md) and [references/property-model.md](references/property-model.md).
-- Template capabilities and provenance: [references/capability-audit.md](references/capability-audit.md) and [references/flower-text-templates.md](references/flower-text-templates.md).
+- Template capabilities and provenance: [references/capability-audit.md](references/capability-audit.md) and [references/flower-text-templates.md](references/flower-text-templates.md). A valid capability file shape is at [references/animation-capabilities.example.json](references/animation-capabilities.example.json); `validate capabilities` checks it and `animation-inventory` proposes candidates.
+- Discovering animatable assets or sound candidates on this machine: `animation-inventory` and `catalog-harvest` (bounded to explicitly supplied reference drafts).
 - Plan fields, gates, and validation behavior: [references/plan-schema.md](references/plan-schema.md).
 - Sound choice, trim, and synchronization: [references/semantic-packaging.md](references/semantic-packaging.md) and [references/motion-audio-audit.md](references/motion-audio-audit.md).
 - State gates and write authorization: always read [references/workflow-state.md](../jianying-rough-cut/references/workflow-state.md) before staging or final execution.

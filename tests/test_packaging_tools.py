@@ -394,6 +394,23 @@ class PackagingToolTests(unittest.TestCase):
         self.assertFalse(sound_only_report["ok"])
         self.assertTrue(any("dialogue evidence" in error for error in sound_only_report["errors"]))
 
+    def test_sound_check_requires_motion_span_for_typing(self):
+        plan, catalog, pools = self._sound_fixture()
+        audio = plan["groups"][0]["audio"]
+        audio["sound_form"] = "typing"
+        audio["trim_policy"] = "motion_span"
+        catalog["presets"][0]["sound_form"] = "typing"
+        pools["pools"][0]["candidates"][0]["sound_form"] = "typing"
+        dialogue = [{"id": "voice", "kind": "dialogue", "start_us": 0, "end_us": 50}]
+
+        self.assertTrue(check_sound_operations(plan, catalog, pools, dialogue)["ok"])
+
+        audio["trim_policy"] = "text_span"
+        report = check_sound_operations(plan, catalog, pools, dialogue)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("typing must use motion_span" in error for error in report["errors"]))
+
     def test_text_mirrors_and_style_ranges_must_stay_synchronized(self):
         prototype = {"content": {"text": "旧", "styles": [{"start": 0, "end": 1}]}, "base_content": "旧", "recognize_text": {"text": "旧"}}
         valid = {"content": {"text": "新", "styles": [{"start": 0, "end": 1}]}, "base_content": "新", "recognize_text": {"text": "新"}}
@@ -404,6 +421,21 @@ class PackagingToolTests(unittest.TestCase):
         gap = json.loads(json.dumps(valid))
         gap["content"]["styles"] = [{"start": 0, "end": 0}]
         self.assertFalse(check_text_replacement(prototype, gap)["ok"])
+
+    def test_text_check_accepts_list_based_text_mirrors(self):
+        prototype = {"content": [{"text": "old", "styles": [{"start": 0, "end": 3}]}]}
+        replacement = {"content": [{"text": "new", "styles": [{"start": 0, "end": 3}]}]}
+
+        self.assertTrue(check_text_replacement(prototype, replacement)["ok"])
+
+    def test_text_check_rejects_stale_list_mirror(self):
+        prototype = {"content": [{"text": "old", "styles": [{"start": 0, "end": 3}]}]}
+        replacement = {"text": "new", "content": [{"text": "old", "styles": [{"start": 0, "end": 3}]}]}
+
+        report = check_text_replacement(prototype, replacement)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("content[0].text" in error for error in report["errors"]))
 
     def test_reference_diff_and_verification_are_occurrence_and_plan_aware(self):
         duplicate = diff_manual_reference({"segments": [{"id": "s1"}, {"id": "s1"}]}, {"segments": [{"id": "s1"}]})
@@ -420,6 +452,567 @@ class PackagingToolTests(unittest.TestCase):
         allowed = verify_packaging_result(before, after, plan)
         self.assertTrue(allowed["ok"])
         self.assertFalse(verify_packaging_result({"segments": []}, {"segments": []}, {"groups": []})["ok"])
+
+    def test_disable_original_rejects_unplanned_text_change(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "visible": True, "text": "approved"}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "visible": False, "text": "changed"}]}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "disable_original", "target_locator": {"timeline": "target", "segment_id": "s1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "text" for item in report["data"]["unplanned_changes"]))
+
+    def test_disable_original_allows_visible_only_change(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "visible": True, "text": "approved"}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "visible": False, "text": "approved"}]}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "disable_original", "target_locator": {"timeline": "target", "segment_id": "s1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+        self.assertTrue(report["ok"], report)
+
+    def test_disable_original_does_not_authorize_segment_removal(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "visible": True}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": []}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "disable_original", "target_locator": {"timeline": "target", "segment_id": "s1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "s1" and item.get("kind") == "removed" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_segment_only_allows_requested_position_change(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "clip": {"transform": {"x": 0}}}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "clip": {"transform": {"x": 0.25}}}]}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_segment", "target_locator": {"timeline": "target", "segment_id": "s1"}, "overrides": {"position_x": {"mode": "absolute", "value": 0.25}}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+        after["segments"][0]["clip"]["transform"]["y"] = 0.5
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "clip.transform.y" for item in report["data"]["unplanned_changes"]))
+
+        after["segments"][0]["clip"]["transform"].pop("y")
+        after["segments"][0]["text"] = "unplanned"
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "text" for item in report["data"]["unplanned_changes"]))
+
+        after["segments"][0].pop("text")
+        after["segments"][0]["material_id"] = "m2"
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "material_id" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_segment_cannot_switch_to_unplanned_material_clone(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m1", "clip": {"transform": {"x": 0, "y": 0}}}],
+            "materials": [{"id": "m1", "type": "text", "content": "old", "font_size": 20, "transform": {"y": 0}}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m2", "clip": {"transform": {"x": 0.25, "y": 0}}}],
+            "materials": [
+                {"id": "m1", "type": "text", "content": "old", "font_size": 20, "transform": {"y": 0}},
+                {"id": "m2", "type": "text", "content": "changed", "font_size": 99, "transform": {"y": 0.5}},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{
+            "operation": "modify_segment", "object_type": "text",
+            "target_locator": {"timeline": "target", "segment_id": "s1"},
+            "overrides": {"position_x": {"mode": "absolute", "value": 0.25}},
+        }]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "m2" and item.get("field") == "font_size" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_segment_cannot_repoint_to_existing_unrelated_material(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m1", "clip": {"transform": {"x": 0}}}],
+            "materials": [
+                {"id": "m1", "type": "text", "content": "approved"},
+                {"id": "m2", "type": "text", "content": "unrelated", "font_size": 99},
+            ],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m2", "clip": {"transform": {"x": 0.25}}}],
+            "materials": before["materials"],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{
+            "operation": "modify_segment", "object_type": "text",
+            "target_locator": {"timeline": "target", "segment_id": "s1"},
+            "overrides": {"position_x": {"mode": "absolute", "value": 0.25}},
+        }]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "material_id" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_segment_target_does_not_authorize_a_new_segment(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1"}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1"}, {"id": "s2", "text": "unplanned"}]}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_segment", "target_locator": {"timeline": "target", "segment_id": "s2"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "s2" and item.get("kind") == "added" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_segment_allows_registry_layout_geometry(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "clip": {"transform": {"x": 0, "y": 0}}}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "clip": {"transform": {"x": 0.2, "y": 0}}}]}
+        plan = {"groups": [{"id": "g1", "layout": {"template_id": "center_single"}, "visual": [{"operation": "modify_segment", "object_type": "text", "text_ref": "u1", "target_locator": {"timeline": "target", "segment_id": "s1"}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_layout_only_allows_inline_scale_and_rotation(self):
+        before = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "clip": {"transform": {"x": 0, "y": 0}, "scale": {"x": 1, "y": 1}, "rotation": 0}}]}
+        after = {"source_timeline_hash": "sha256:source", "segments": [{"id": "s1", "clip": {"transform": {"x": 0, "y": 0}, "scale": {"x": 1, "y": 1}, "rotation": 10}}]}
+        plan = {"groups": [{"id": "g1", "layout": {"template_id": "custom", "slots": [{"id": "main", "ref_type": "subtitle_unit", "text_ref": "u1", "offset": {"dx": 0, "dy": 0}, "transform": {"rotation": 10}}]}, "visual": [{"operation": "modify_segment", "object_type": "text", "text_ref": "u1", "target_locator": {"timeline": "target", "segment_id": "s1"}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+        after["segments"][0]["clip"]["scale"]["x"] = 1.2
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "clip.scale.x" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_text_allows_linked_material_text_change(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m1"}],
+            "materials": [{"id": "m1", "type": "text", "content": "old", "font_size": 20}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m1"}],
+            "materials": [{"id": "m1", "type": "text", "content": "new", "font_size": 20}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_text", "object_type": "text", "target_locator": {"timeline": "target", "segment_id": "s1"}, "text": "new"}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+        after["materials"][0]["font_size"] = 40
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("collection") == "materials" and item.get("field") == "font_size" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_text_allows_referenced_private_material_clone(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m1"}],
+            "materials": [{"id": "m1", "type": "text", "content": "old"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "m2"}],
+            "materials": [
+                {"id": "m1", "type": "text", "content": "old"},
+                {"id": "m2", "type": "text", "content": "new"},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_text", "object_type": "text", "target_locator": {"timeline": "target", "segment_id": "s1"}, "text": "new"}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+        after["materials"][0]["content"] = "changed source material"
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "m1" and item.get("kind") == "changed" for item in report["data"]["unplanned_changes"]))
+
+    def test_modify_text_allows_linked_animation_change(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "t1", "extra_material_refs": ["anim1"]}],
+            "materials": [
+                {"id": "t1", "type": "text", "content": "old"},
+                {"id": "anim1", "type": "sticker_animation", "animations": []},
+            ],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "t1", "extra_material_refs": ["anim2"]}],
+            "materials": [
+                {"id": "t1", "type": "text", "content": "new"},
+                {"id": "anim1", "type": "sticker_animation", "animations": []},
+                {"id": "anim2", "type": "sticker_animation", "animations": [{"type": "in", "duration": 100}]},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_text", "object_type": "text", "target_locator": {"timeline": "target", "segment_id": "s1"}, "text": "new", "animation": {"resource_id": "motion-1", "duration_us": 100}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_modify_text_allows_new_animation_container_when_requested(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "t1", "extra_material_refs": []}],
+            "materials": [{"id": "t1", "type": "text", "content": "old"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "t1", "extra_material_refs": ["anim1"]}],
+            "materials": [
+                {"id": "t1", "type": "text", "content": "new"},
+                {"id": "anim1", "type": "sticker_animation", "multi_language_current": "none", "animations": [{"type": "in", "duration": 100}]},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_text", "target_locator": {"timeline": "target", "segment_id": "s1"}, "text": "new", "animation": {"resource_id": "motion-1", "duration_us": 100}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_modify_text_material_clone_permission_is_segment_scoped(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [
+                {"id": "s1", "material_id": "m1"},
+                {"id": "s2", "material_id": "m3", "visible": True},
+            ],
+            "materials": [
+                {"id": "m1", "type": "text", "content": "old"},
+                {"id": "m3", "type": "text", "content": "other"},
+            ],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [
+                {"id": "s1", "material_id": "m2"},
+                {"id": "s2", "material_id": "m2", "visible": False},
+            ],
+            "materials": [
+                {"id": "m1", "type": "text", "content": "old"},
+                {"id": "m3", "type": "text", "content": "other"},
+                {"id": "m2", "type": "text", "content": "new"},
+            ],
+        }
+        plan = {"groups": [
+            {"id": "g1", "visual": [{"operation": "modify_text", "target_locator": {"timeline": "target", "segment_id": "s1"}, "text": "new"}]},
+            {"id": "g2", "visual": [{"operation": "disable_original", "target_locator": {"timeline": "target", "segment_id": "s2"}}]},
+        ]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "s2" and item.get("field") == "material_id" for item in report["data"]["unplanned_changes"]))
+
+    def test_audio_reuse_only_allows_requested_segment_fields(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "a-track", "segments": ["a1"]}],
+            "segments": [{"id": "a1", "volume": 0.5, "visible": True, "source_timerange": {"start": 0, "duration": 100}, "target_timerange": {"start": 0, "duration": 100}, "extra_material_refs": ["f1"]}],
+            "materials": [{"id": "f1", "type": "audio_fade", "fade_in_duration": 0, "fade_out_duration": 0}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "a-track", "segments": ["a1"]}],
+            "segments": [{"id": "a1", "volume": 0.7, "visible": True, "source_timerange": {"start": 10, "duration": 90}, "target_timerange": {"start": 20, "duration": 90}, "extra_material_refs": ["f1"]}],
+            "materials": [{"id": "f1", "type": "audio_fade", "fade_in_duration": 25, "fade_out_duration": 0}],
+        }
+        plan = {"groups": [{"id": "g1", "audio": {"action": "reuse_existing", "target_locator": {"timeline": "target", "segment_id": "a1"}, "volume": 0.7, "source_range": {"start_us": 10, "end_us": 100}, "target_range": {"start_us": 20, "end_us": 110}, "fade_in_us": 25}}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+        after["segments"][0]["visible"] = False
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "visible" for item in report["data"]["unplanned_changes"]))
+
+        after["segments"][0]["visible"] = True
+        after["materials"][0]["fade_out_duration"] = 50
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "fade_out_duration" for item in report["data"]["unplanned_changes"]))
+
+    def test_audio_reuse_does_not_remove_unrelated_material_refs(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "a1", "extra_material_refs": ["f1", "e1"]}],
+            "materials": [
+                {"id": "f1", "type": "audio_fade", "fade_in_duration": 0, "fade_out_duration": 0},
+                {"id": "e1", "type": "audio_effect", "name": "keep"},
+            ],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "a1", "extra_material_refs": ["f1"]}],
+            "materials": [
+                {"id": "f1", "type": "audio_fade", "fade_in_duration": 25, "fade_out_duration": 0},
+                {"id": "e1", "type": "audio_effect", "name": "keep"},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "audio": {"action": "reuse_existing", "target_locator": {"timeline": "target", "segment_id": "a1"}, "fade_in_us": 25}}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "extra_material_refs" for item in report["data"]["unplanned_changes"]))
+
+    def test_audio_reuse_allows_fade_clone_while_preserving_other_refs(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "a1", "extra_material_refs": ["f1", "e1"]}],
+            "materials": [
+                {"id": "f1", "type": "audio_fade", "fade_in_duration": 0, "fade_out_duration": 0},
+                {"id": "e1", "type": "audio_effect", "name": "keep"},
+            ],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "a1", "extra_material_refs": ["f2", "e1"]}],
+            "materials": [
+                {"id": "f1", "type": "audio_fade", "fade_in_duration": 0, "fade_out_duration": 0},
+                {"id": "f2", "type": "audio_fade", "fade_in_duration": 25, "fade_out_duration": 0},
+                {"id": "e1", "type": "audio_effect", "name": "keep"},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "audio": {"action": "reuse_existing", "target_locator": {"timeline": "target", "segment_id": "a1"}, "fade_in_us": 25}}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_modify_text_animation_does_not_remove_unrelated_material_refs(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "t1", "extra_material_refs": ["anim1", "e1"]}],
+            "materials": [
+                {"id": "t1", "type": "text", "content": "old"},
+                {"id": "anim1", "type": "sticker_animation", "animations": []},
+                {"id": "e1", "type": "effect", "name": "keep"},
+            ],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "s1", "material_id": "t1", "extra_material_refs": ["anim1"]}],
+            "materials": [
+                {"id": "t1", "type": "text", "content": "new"},
+                {"id": "anim1", "type": "sticker_animation", "animations": [{"type": "in", "duration": 100}]},
+                {"id": "e1", "type": "effect", "name": "keep"},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "modify_text", "target_locator": {"timeline": "target", "segment_id": "s1"}, "text": "new", "animation": {"resource_id": "motion-1", "duration_us": 100}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "extra_material_refs" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_allows_group_associated_addition(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "render_index": 1}],
+            "segments": [],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "render_index": 1}],
+            "segments": [{"id": "s2", "group_id": "g1", "material_id": "m2"}],
+            "materials": [{"id": "m2", "type": "text", "group_id": "g1"}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_new_audio_allows_group_associated_asset_closure(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "a-track", "segments": []}],
+            "segments": [],
+            "materials": [],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "a-track", "segments": ["a1"]}],
+            "segments": [{"id": "a1", "group_id": "g1", "material_id": "m1"}],
+            "materials": [{"id": "m1", "type": "audio", "group_id": "g1"}],
+        }
+        plan = {"groups": [{"id": "g1", "audio": {"action": "add_asset", "target_locator": {"timeline": "target", "track_id": "a-track"}}}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_audio_reuse_allows_only_requested_fade_material_fields(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "a1", "extra_material_refs": ["f1"]}],
+            "materials": [{"id": "f1", "type": "audio_fade", "fade_in_duration": 0, "fade_out_duration": 0}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "segments": [{"id": "a1", "extra_material_refs": ["f1"]}],
+            "materials": [{"id": "f1", "type": "audio_fade", "fade_in_duration": 25, "fade_out_duration": 0}],
+        }
+        plan = {"groups": [{"id": "g1", "audio": {"action": "reuse_existing", "target_locator": {"timeline": "target", "segment_id": "a1"}, "fade_in_us": 25}}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+        after["materials"][0]["fade_out_duration"] = 50
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("field") == "fade_out_duration" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_only_allows_referenced_material_closure(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1"}],
+            "segments": [],
+            "materials": [],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1"}],
+            "segments": [{"id": "s2", "group_id": "g1", "material_id": "m2"}],
+            "materials": [
+                {"id": "m2", "type": "text", "group_id": "g1", "child_material": "m3"},
+                {"id": "m3", "type": "sticker_animation", "group_id": "g1"},
+                {"id": "unreferenced", "type": "effect", "group_id": "g1"},
+            ],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "unreferenced" and item.get("kind") == "added" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_does_not_authorize_existing_track_changes(self):
+        before = {"source_timeline_hash": "sha256:source", "tracks": [{"id": "t1", "render_index": 1}]}
+        after = {"source_timeline_hash": "sha256:source", "tracks": [{"id": "t1", "render_index": 99}]}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("collection") == "tracks" and item.get("field") == "render_index" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_does_not_authorize_removing_existing_track_segment_refs(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s1", "s2"]}],
+            "segments": [{"id": "s1"}, {"id": "s2"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s2"]}],
+            "segments": [{"id": "s1"}, {"id": "s2"}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("collection") == "tracks" and item.get("field") == "segments" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_does_not_reorder_existing_track_segment_refs(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s1", "s2"]}],
+            "segments": [{"id": "s1"}, {"id": "s2"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s2", "s1"]}],
+            "segments": [{"id": "s1"}, {"id": "s2"}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("collection") == "tracks" and item.get("field") == "segments" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_does_not_add_unplanned_track_segment_refs(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s1"]}],
+            "segments": [{"id": "s1"}, {"id": "s2"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s1", "s2"]}],
+            "segments": [{"id": "s1"}, {"id": "s2"}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("collection") == "tracks" and item.get("field") == "segments" for item in report["data"]["unplanned_changes"]))
+
+    def test_new_visual_allows_group_associated_track_segment_insertion(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s1"]}],
+            "segments": [{"id": "s1"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": ["s1", "s2"]}],
+            "segments": [{"id": "s1"}, {"id": "s2", "group_id": "g1"}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        self.assertTrue(verify_packaging_result(before, after, plan)["ok"])
+
+    def test_new_visual_does_not_change_embedded_existing_track_segment(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": [{"id": "s1", "text": "approved"}]}],
+            "segments": [{"id": "s1"}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": [{"id": "s1", "text": "changed"}]}],
+            "segments": [{"id": "s1"}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("collection") == "tracks" and item.get("field") == "segments" for item in report["data"]["unplanned_changes"]))
+
+    def test_embedded_track_segment_accepts_planned_field_change(self):
+        before = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": [{"id": "s1", "clip": {"transform": {"x": 0}}}]}],
+            "segments": [{"id": "s1", "clip": {"transform": {"x": 0}}}],
+        }
+        after = {
+            "source_timeline_hash": "sha256:source",
+            "tracks": [{"id": "t1", "segments": [{"id": "s1", "clip": {"transform": {"x": 0.25}}}]}],
+            "segments": [{"id": "s1", "clip": {"transform": {"x": 0.25}}}],
+        }
+        plan = {"groups": [{"id": "g1", "visual": [{
+            "operation": "modify_segment",
+            "target_locator": {"timeline": "target", "segment_id": "s1"},
+            "overrides": {"position_x": {"mode": "absolute", "value": 0.25}},
+        }]}]}
+
+        report = verify_packaging_result(before, after, plan)
+        self.assertTrue(report["ok"], report)
+
+    def test_group_association_does_not_authorize_existing_segment_changes(self):
+        before = {"source_timeline_hash": "sha256:source", "tracks": [{"id": "t1"}], "segments": [{"id": "s1", "group_id": "g1", "text": "approved"}]}
+        after = {"source_timeline_hash": "sha256:source", "tracks": [{"id": "t1"}], "segments": [{"id": "s1", "group_id": "g1", "text": "changed"}]}
+        plan = {"groups": [{"id": "g1", "visual": [{"operation": "copy_from_subtitle", "target_locator": {"timeline": "target", "track_id": "t1"}}]}]}
+
+        report = verify_packaging_result(before, after, plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item.get("id") == "s1" and item.get("kind") == "changed" for item in report["data"]["unplanned_changes"]))
 
     def test_generic_root_and_cli_input_errors_use_code_two(self):
         missing = check_generic_content([Path("does-not-exist-generic-root")])

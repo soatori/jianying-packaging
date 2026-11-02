@@ -60,3 +60,41 @@ Write transparency to `segment.global_alpha` only when the current text
 segment prototype confirms that field and its range. Keep `segment.visible`
 separate for hiding. A preview must show both the effective alpha and
 visibility state.
+
+
+## Exact capability tokens
+
+The capability file is matched by literal values. A near-miss token silently
+downgrades to "unverified", so these are the exact strings:
+
+| Field | Required value | Common wrong value |
+| --- | --- | --- |
+| top-level | `jianying_version` must be a string **strictly equal** to the running editor version | omitting it, or writing a range like `">=11"` |
+| `verified[].status` | `visually_verified` | `visual_verified`, `verified`, `verified_visual` |
+| `verified[].target_kind` | `plain_text` | `text`, `subtitle`, `plain-text` |
+| `verified[].required_inputs` | array; **empty** for plain text | omitting it when the preset needs `words` |
+| `verified[].resource_id` / `md5` | both present and exact | inventing an md5 from the display name |
+
+`validate capabilities` reports the expected token next to the observed one, so a
+typo is caught before `prepare` fails on it. A ready-to-copy shape lives in
+[animation-capabilities.example.json](animation-capabilities.example.json).
+
+Two different presets can share a display name (`渐显` exists as both a video and a
+sticker animation). Match on `resource_id` + `md5`, never on the name.
+
+## Reference-draft harvesting
+
+Discovering what this machine can actually render is legitimate; sweeping the
+machine is not.
+
+- Allowed input: the reference drafts named explicitly for the current case, at
+  most five, plus the local `Cache/effect` tree.
+- Bounded output: at most 200 items per harvest, with the scanned timeline ids and
+  the note recorded as provenance.
+- Everything found starts `unverified`. A cache directory existing proves the
+  asset was downloaded once; it does not prove plain-text rendering on this
+  version. Promotion to `visually_verified` requires a reopen-and-review by a
+  person.
+- Never enumerate every saved draft, and never scan a whole drive. `catalog-harvest`
+  and `animation-inventory` enforce the caps; do not bypass them with ad-hoc
+  scripts.

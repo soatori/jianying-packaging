@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "unknown"}
+SOUND_FORMS = {"single_hit", "decay", "multi_hit", "typing", "loop", "ambience", "unknown"}
 TRIM_POLICIES = {"text_span", "motion_span", "natural", "manual_review"}
 SOUND_STATUSES = {"verified", "candidate", "needs_listen", "blocked"}
 LEADING_POLICIES = {"skip", "preserve", "manual_review"}
@@ -77,8 +77,10 @@ def validate_catalog(data: Any) -> dict[str, Any]:
             errors.append(f"{path}.default_trim_policy is invalid")
         if sound_form in {"single_hit", "decay"} and trim == "motion_span":
             warnings.append(f"{path}: single/decay sound defaults to text_span")
-        if sound_form == "multi_hit" and trim == "text_span":
-            warnings.append(f"{path}: multi_hit sound normally uses motion_span")
+        if sound_form == "typing" and trim != "motion_span":
+            warnings.append(f"{path}: typing sound normally uses motion_span")
+        elif sound_form == "multi_hit" and trim == "text_span":
+            warnings.append(f"{path}: {sound_form} sound normally uses motion_span")
         if preset.get("leading_silence_policy") not in LEADING_POLICIES:
             errors.append(f"{path}.leading_silence_policy is invalid")
         if preset.get("status") not in SOUND_STATUSES:

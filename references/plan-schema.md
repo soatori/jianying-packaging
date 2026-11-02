@@ -200,6 +200,80 @@ A missing or stale review report blocks commit even when the structural plan val
 
 Prepare and commit classify source replica mismatches using the current `ReplicaManifest` roles. Drift in an associated `writable-backup` is a warning; primary and associated `writable-template` drift block. Missing, unreadable, or unassociated candidates also block. After a transaction write, replica validation remains strict and every required target copy must match.
 
+## Top-level `music[]`
+
+A background bed is not a group operation. It goes in a top-level `music[]` array
+so it cannot be mistaken for a sound effect tied to a visible event:
+
+```json
+{
+  "music": [{
+    "id": "m1",
+    "role": "music",
+    "target_locator": {"track_type": "audio", "insert_index": 0},
+    "source_locator": {"asset_id": "case-catalog:music-opener"},
+    "target_range": {"start_us": 0, "duration_us": 10400000},
+    "source_range": {"start_us": 0, "duration_us": 10400000},
+    "volume": 0.40,
+    "fade_in_us": 1000000,
+    "fade_out_us": 3000000,
+    "source": "case_catalog",
+    "catalog_ref": "music-opener",
+    "decision_basis": "opener bed under the product introduction"
+  }]
+}
+```
+
+Rules:
+
+- `music[]` and a group's `audio` are mutually exclusive for the same interval; a
+  bed must never be expressed as `group.audio`.
+- `volume` must sit in the music band (0.35–0.45 by default), and both fade values
+  must be positive. An unfaded bed longer than 5 s blocks prepare.
+- One music clip at a time; overlaps must be 300–500 ms and faded on both sides.
+- The catalog reference must exist in the case catalog; the plan carries no
+  absolute asset path.
+
+## `animation_ref` shorthand and `expand-plan`
+
+A visual may carry the short form `animation: {"resource_id": "<id>"}` while the
+plan is being authored. `expand-plan` fills `duration_us` from the visible row
+window and the configured head/follow durations, then writes the full form back:
+
+```json
+{"animation": {"resource_id": "<id>", "duration_us": 400000}, "motion_role": "uniform_entry"}
+```
+
+The adapter still accepts only the full form. The shorthand lives in the expander,
+never in the adapter — a plan handed to `prepare` with a duration-less animation
+fails exactly as before. `motion_role` is `uniform_entry` or `emphasis` and drives
+the reuse cap.
+
+## Audio anchor policy
+
+Every audio event must declare how it was placed:
+
+```json
+{"anchor_policy": "entry_start", "anchor_basis": "per-row fade has no separate perceptual peak"}
+```
+
+`anchor_policy` is one of `entry_start`, `perceptual_peak`, `transition_peak`,
+`explicit_us`. `anchor_basis` must be a non-empty string explaining the choice for
+*that* event. There is no plan-level default: a plan that carries audio events
+without a per-event policy is incomplete, because a per-row entrance and a page
+turn genuinely anchor on different points. The placement equation is unchanged —
+`target_start_us + max(0, audible_source_us - source_start_us) = anchor_us` — only
+the choice of `anchor_us` becomes explicit.
+
+## Unsupported layers
+
+`transitions[]` and `effects[]` are **not** schema 2.0 fields. Do not add them to a
+plan and do not invent field names for them: an unknown key is rejected, and a
+plausible-looking name is worse because it implies support that does not exist.
+Transitions and colour effects live on the editor driver route, which requires a
+same-version prototype, a preview, and a read-back. `layer-audit` can report them
+read-only from a snapshot.
+
 ## Visual and audio operations
 
 Use exact locators for executable operations. A new object needs a target track locator; an existing object needs a segment locator. A copied template must identify its source closure and allowed overrides. Every override is either `{ "mode": "absolute", "value": ... }` or `{ "mode": "relative", "delta": ... }`.
@@ -225,6 +299,16 @@ read back, and visually verified in Jianying. Do not relabel a material or add
 bypass this gate. Unsupported operations may use a project-local driver through
 the editor transaction API only after its prototype mapping is verified;
 otherwise leave them blocked.
+
+A style request whose property is simply absent from the whitelist above (color,
+font size, transform, entry animation on a native `subtitle` copy) is *not*
+represented by schema 2.0, so the driver path — not the plan path — is the
+correct route. That driver must reuse `jianying-editor`'s transactional
+write/read-back API rather than writing `draft_content.json` itself, and it
+inherits the same gates: preview approval, unchanged source fingerprint, backup,
+per-replica read-back validation, and rollback reporting. Note the reason for
+leaving the plan adapter in the driver's header comment so a later reader does
+not assume the plan path was skipped out of convenience.
 
 The adapter copies a template segment and its complete material closure from
 the current draft. A preset with one source segment needs no extra selector; if
@@ -265,7 +349,7 @@ For a non-`none` audio action, require:
 }
 ```
 
-`single_hit` and `decay` default to `text_span`; `multi_hit` and typing-like sounds default to `motion_span`. A known leading silence must be skipped or explicitly preserved with a reason. Do not stretch or loop unless the catalog permits it. A group has at most one primary sound.
+`single_hit` and `decay` default to `text_span`; `multi_hit` and `typing` use `motion_span`. The `typing` sound form is valid in plans, catalogs, and pools. A known leading silence must be skipped or explicitly preserved with a reason. Do not stretch or loop unless the catalog permits it. A group has at most one primary sound.
 
 `text_span` requires `text_range`; `motion_span` requires a valid group motion event. A final plan must select a verified candidate from a pool containing at least three unique candidates. The pool is a choice set, not simultaneous playback.
 

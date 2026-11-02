@@ -16,7 +16,13 @@ For `canvas_width < canvas_height`, every approved subtitle line must satisfy:
 - No unsplit long run. Punctuation-free text longer than the limit must be
   force-split on a real pause or a complete-token edge — never by character
   count alone, and never allowed to wrap by itself.
-- At most 10 Chinese characters per line.
+- At most **13** Chinese characters per line by default; `--profile
+  vertical_standing` drops it to **10** for a stricter standing-title look. The
+  limit has exactly one source of truth: a case reference may override it, and
+  both `subtitle-reflow --max-chars` and `layer-audit --max-chars-per-line` must
+  read the same value. Count it programmatically and print each line's length next
+  to its verdict — eyeballed counting misreports in both directions, and a
+  14-character line will read as "13, fine" on screen.
 - Modal particles stand alone: `嗯`, `啊`, `欸`, `哦`, `呢`, `呐` each get their
   own line and are never merged into the neighbouring sentence or dropped.
 
@@ -36,7 +42,13 @@ Preflight behavior:
    its own case rule (typically a two-line title fold that preserves the final
    `？`), so never generalize these five bullets across orientations.
 3. Any approved re-line breaking must sync `styles[].range` to the new text
-   length including `\n`; a stale range is a silent color/stroke truncation.
+   length including `\n`; a stale range is a silent color/stroke truncation. The
+   display copy is still one of the subtitle's three text fields; when emphasis
+   requires re-lining, the three-field agreement rule in
+   `jianying-rough-cut/references/subtitle-proofreading-and-audio-alignment.md`
+   still applies — `recognize_text` and `words[].text` keep the ASR original when
+   a human only retyped `content.text`, and that stale copy resurfaces as soon as
+   a per-character animation or "update recognition" runs.
 
 ## Context-first emphasis
 
@@ -45,6 +57,23 @@ Evaluate each complete sentence with the previous and next sentence, the current
 The default emphasis unit is a complete sentence. Preserve the sentence as supplied in the current subtitles. Highlight a word, character, or within-sentence fragment only when the user explicitly requests that granularity. Do not fragment a sentence just to increase the number of highlighted elements.
 
 For short videos, group one to three complete sentences when they share a message; two is a useful default when timing and meaning fit. Group size controls the composition, not the unit of text selection. Follow any explicit user grouping.
+
+### Emphasis density modes
+
+Density is a **mode**, not a per-run guess. All three modes share one rule: a unit
+is promoted because of what it says, never because of its sentence pattern, its
+word frequency, or a cadence target. `semantic_basis` must be non-empty on every
+selected unit in every mode.
+
+| Mode | When it applies | Behaviour |
+| --- | --- | --- |
+| `restraint` (default) | no explicit density instruction | 1–3 groups per topic, supporting facts stay plain; a question is not promoted just because it asks something |
+| `qa_framing` | the brief asks for a question-and-answer structure | every genuinely asked question may become its own group, answers are selected as separate groups; **the number of answer groups follows the material, never a fixed quota** |
+| `dense_coverage` | the brief asks that every retained row carry emphasis | coverage is the goal; still no promotion on sentence pattern alone, and still record a reason per unit |
+
+Under `qa_framing`, a question that is dropped from emphasis must appear in the
+selection preview's dropped list with a reason — "it is a question" is not a
+reason to include it, and "it is only a question" is not a reason to drop it.
 
 ### Dialogue-aware groups
 
@@ -95,7 +124,11 @@ Use level 1 for supportive emphasis, level 2 for important information, and leve
 - Preserve the original start of each spoken phrase unless an approved template intentionally stages the phrases.
 - Do not merge unrelated lines to fit a template.
 - Treat punctuation, labels, icons, and background shapes as subordinate layers of the same group.
+- A key-sentence set must cover each retained segment's opening line and its core line, so the preview reads as the segment's spine; a segment with no selected line is a selection gap, not an intentionally quiet segment.
+- Cap one screen at 1–2 lines and never more than 3 short lines. More than that is a grouping error to split into another event, not a denser screen.
 - When emphasis lines are copied onto an upper track they inherit the caption baseline. Anchor the first/single line on that baseline and move apart only the lines that genuinely overlap in time, by the reference-derived row spacing; for dense multi-name groups prefer a two-column block near the safe-zone edge over an ever-taller single stack.
+- Express level with scale, not with font size. Keep one size across the whole package (verify the number in the project reference; the observed engineering size stays constant within a draft) and separate L1→L3 with `uniform_scale` steps taken from the verified reference, e.g. a monotone ladder of about 1.04/1.06/1.08/1.10/1.25. Mixing sizes per line makes the safe-zone fit and the reference comparison unstable.
+- Inside a group, use at most one strong accent: the landing sentence carries the accent color, the setup lines stay white or a lighter accent. A pure question group may legitimately stay all-white. Two lines of the same group in the same strong color reads as an error even when each line is individually correct.
 
 ### Opening, ending, and spacing
 
@@ -112,6 +145,52 @@ Each reviewed key group should be exported with:
 - speaker IDs, turn roles, and confidence;
 - neighboring context and spacing notes;
 - review status and any listening-dependent issue.
+
+### Emphasis selection preview
+
+The emphasis *selection* is reviewed with a self-contained HTML page (the tool
+geometry HTML in SKILL.md step 6 is commit evidence and does not replace this).
+Its job is to let the reviewer audit the picks, so it must be a list of **every
+current subtitle row in time order**, not only the selected lines — dropped and
+reserve rows stay visible so coverage and deletions are checkable.
+
+Per-row data model (keep it as a `const D=[...]` array so the page is one file):
+
+- `i` original row index (never renumber on add/remove — see numbering rule);
+- `s`/`e` start/end in seconds, printed to two decimals;
+- `t` the display text, and `raw` the untouched source text when `t` was edited;
+- `g` group id (empty for ungrouped rows) and `first` = is this the group's head;
+- `lv` level 1–3 (0 = not emphasized);
+- `cat` short semantic category label for the group;
+- `main` primary pick vs reserve/backup candidate;
+- flags: profile violation (over line limit, non-standalone particle, dropped
+  particle) with a short reason string; fragment split (one sentence shown
+  across screens, suggest merging); text edited (non-verbatim, needs confirm).
+
+Rendering conventions:
+
+- Dark page, color-coded left border plus a badge per level. Reserve rows use a
+  dashed border and a single top checkbox toggles showing all of them (default
+  shown); ungrouped/non-picked rows carry no badge so the eye lands on groups.
+- Show the group badge (id + level + category) only on the group's first row, so
+  a multi-line group reads as one event.
+- Insert a centered "— gap Ns —" divider whenever the silence before a row
+  exceeds a review threshold (default ~4s) to surface sparse pacing.
+- Header meta states the per-screen line cap (recommend 1–2, max 3), the
+  primary/reserve counts, and coverage percentage over the requested scope.
+
+Iteration discipline:
+
+- Numbering is frozen once issued; adding or removing rows never renumbers
+  existing rows, so review comments ("#10", "G7") stay addressable across turns.
+- Title the page with an explicit `vN` and keep a versioned changelog that
+  records, per turn, the changes made in response to the user's instructions.
+- Any row whose text was edited (non-verbatim) must be flagged for confirmation
+  and retain the original source text.
+
+This page decides *selection* only. Approved layout, flower text, position, and
+motion are reviewed with the separate one-screen-per-group card described in
+SKILL.md "Preview deliverable gate".
 
 ## Sound choice
 
@@ -149,6 +228,23 @@ default for restrained or technical packaging.
 
 These are families, not fixed asset names. Select an actual asset only after auditioning or identifying a user-approved reusable segment.
 
+Semantic role → motion family, as a reviewable default mapping (resolve real
+presets and resource IDs from the current case pool, then intersect with the
+local effect cache; never carry preset names across versions unverified):
+
+| Speech/visual role | Motion family | Intent |
+|---|---|---|
+| setup / lead-in line of a group | `luminous_reveal` (soft fade or typed entry) | open without competing with the landing line |
+| question phrasing, conclusion landing | `completion_glow` with a slight scale landing | mark the point where the answer settles |
+| number, parameter, ranking | `numeric_glitch` / sparkle-tier reveal | make the figure the memorable item |
+| technical term or product name | `directional_sweep` (directional grow or blur-out) | give the term a shape, not a flash |
+| risk or consequence | a stronger `directional_sweep` (wipe with a clear direction) | read as warning, not decoration |
+
+Within one group the front line takes the setup treatment and the back line takes
+the emphasis treatment; adjacent screens must not repeat the same motion. A group
+whose two lines share one role needs a selection review, not two identical
+animations.
+
 Every motion family uses a candidate pool rather than one hard-coded sound. A pool contains at least three distinct observed preset IDs before it can support an automatic final apply. Select one candidate after semantic fit, sound-form, leading-silence, dialogue-collision, and reuse checks. A candidate pool is never a request to layer all candidates.
 
 Count reuse across the whole plan before review, not only inside the per-preset validator. A human-readable plan table can silently schedule one preset more than its cap (the cap counts every event selecting it, including cross-group uses); when the count exceeds the cap, swap the least semantically-bound occurrence to a same-family different-timbre preset rather than dropping the sound.
@@ -160,12 +256,66 @@ Inline candidate lists are review evidence only. Final plans must resolve `candi
 Sound-form defaults are:
 
 - `single_hit` and `decay` → text-span trim;
-- `multi_hit` and typing/continuous-click sounds → motion-span trim;
+- `multi_hit` and `typing` sounds → motion-span trim;
 - known leading silence → skip unless `preserve` is explicitly justified;
 - `text_span` target range must equal the text range; `motion_span` target range must equal the parsed motion event;
 - Review-mode dialogue overlap is a warning, but final-plan dialogue overlap or missing dialogue interval evidence is a safety block. A selected preset must be present in the formal candidate pool and catalog; final plans additionally require verified pool/candidate/catalog records and a legal leading-silence source range.
 - a known leading silence requires an explicit source range so the editor context cannot silently start at source zero;
 - unknown form or incomplete duration data → human review.
+
+## Three-layer mix
+
+A finished vertical video has three audio layers, and they are not peers: the
+voice leads, everything else makes room.
+
+| Layer | Default | Accepted band | Rules |
+| --- | --- | --- | --- |
+| Dialogue (spoken voice, including a video's own audio) | 1.00 | 0.90–1.00 | The reference level. Never ducked for music on interview material |
+| Sound effects (`type: sound`) | **0.50** | 0.45–0.55, impact hits up to 0.60 | Short transients; must stay distinguishable when music is underneath |
+| Background music (`type: music`) | **0.40** | 0.35–0.45, pure-music sections up to 0.55 | Always faded: fade in 1.0 s, fade out 3.0 s |
+
+Hard checks (block, not warning): music above 0.55 while dialogue exists; music
+running longer than 5 s with no fade; an SFX segment at volume 0 or above 0.8.
+Warning: SFX below 0.25 while overlapping music.
+
+Other rules:
+
+- One music clip at a time. If two beds meet, overlap them by 300–500 ms and fade
+  both sides.
+- A section with no music is legal. Never add a default bed just to fill silence.
+- Measure the tail silence on the dialogue layer when music runs to the end.
+
+`layer-audit` reports all of the above from a snapshot; it never fixes them.
+
+## Music bed
+
+- Place music through the plan's top-level `music[]` array, not inside
+  `group.audio`. A group's audio is a sound effect tied to a visible event; a bed
+  is not.
+- Cut beds at dialogue boundaries. Never start or stop music mid-sentence.
+- Two-part structure is common: a lighter opener for the first ~10 s, then the main
+  bed. Overlap the join and fade both sides.
+- Reuse: the same track may supply at most two segments in one video, and neither
+  segment may be stretched by looping beyond 60 s.
+- Supply the dialogue intervals (`--existing-audio`) so the audit can tell whether
+  music is actually covering speech.
+
+## Transition sound pairing
+
+Sound effects attach to two different kinds of event, and they are counted
+separately:
+
+| Visual event | Sound family | Anchor |
+| --- | --- | --- |
+| Per-row text entrance | light transition (swish, tick, pop) | `entry_start` |
+| Page turn / page flip | paper rustle | `transition_peak_us` |
+| Whip / whip-pan | whoosh | `transition_peak_us` |
+| Scale or impact landing | impact hit | `animation_peak_us` |
+| Cross dissolve | none | — |
+
+A transition sound is **not** part of the per-row animation coverage matrix. If a
+48-line plan gets one transition sound, coverage is still 48 events, not 49. Count
+them in separate buckets so a full-coverage check does not report a phantom gap.
 
 ## Sound catalog responsibilities
 
@@ -179,7 +329,20 @@ Represent the visual event with:
 - `animation_peak_us`
 - `animation_end_us`
 
-Default the sound anchor to the perceptual landing point, usually `animation_peak_us` or `transition_peak_us`. Use group start only when the sound itself initiates the visible action.
+There is no single global anchor. Pick a policy per event and record both
+`anchor_policy` and `anchor_basis`, because a global default is wrong in one
+direction or the other:
+
+| Situation | `anchor_policy` | Anchor | Why |
+| --- | --- | --- | --- |
+| Per-row entrance (fade, 200–400 ms slide) | `entry_start` | `animation_start_us` | A short fade has no independent perceptual landing; the text appearing *is* the beat |
+| One-shot transition (page turn, wipe) | `transition_peak_us` | transition midpoint | The motion of the transition is what the ear should hit |
+| Scale/impact hit | `animation_peak_us` | scale or impact peak | There is a measurable peak to land on |
+| Overlay / B-roll entering frame | `entry_start` | layer start | One-shot appearance |
+| Explicit user or reference choice | `explicit_us` | given value | Documented reason |
+
+The audio events of one plan may use different policies. What is forbidden is
+carrying no policy at all.
 
 When skipping leading silence, source trimming and timeline placement are separate decisions. Let `audible_source_us` be the first audible transient, `source_start_us` the source in-point, and `anchor_us` the intended visual landing. Place the clip so `target_start_us + max(0, audible_source_us - source_start_us) = anchor_us`. Trimming the source in-point alone does not repair a stale target position. Verify the audible onset against the motion with waveform evidence and listening.
 

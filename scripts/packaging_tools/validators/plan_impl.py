@@ -55,7 +55,7 @@ LAYOUT_REF_TYPES = {"subtitle_unit", "auxiliary_mark"}
 LAYOUT_ALIGNMENTS = {"left", "center", "right", "top", "middle", "bottom"}
 TRIM_POLICIES = {"text_span", "motion_span", "natural", "manual_review"}
 LEADING_SILENCE_POLICIES = {"skip", "preserve", "manual_review"}
-SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "unknown"}
+SOUND_FORMS = {"single_hit", "decay", "multi_hit", "typing", "loop", "ambience", "unknown"}
 SOUND_STATUSES = {"verified", "candidate", "needs_listen", "blocked"}
 MOTION_SOUND_FAMILIES = {
     "pop", "reveal", "typing", "sweep", "impact", "mechanical_open",
@@ -840,14 +840,14 @@ def validate_v11_contract(data: dict[str, Any], errors: list[str], warnings: lis
                 warnings.append(f"{path}: blocked template must not be applied")
 
     sound_selection = data.get("sound_selection")
-    reuse_cap = 3
+    reuse_cap = 2
     if not isinstance(sound_selection, dict):
         errors.append("sound_selection: required object for schema 1.1")
     else:
-        reuse_cap = sound_selection.get("reuse_cap", 3)
+        reuse_cap = sound_selection.get("reuse_cap", 2)
         if not is_int(reuse_cap) or reuse_cap <= 0:
             errors.append("sound_selection.reuse_cap: must be a positive integer")
-            reuse_cap = 3
+            reuse_cap = 2
         order = sound_selection.get("selection_order")
         if not isinstance(order, list) or not order:
             errors.append("sound_selection.selection_order: must be a non-empty array")
@@ -941,7 +941,7 @@ def validate_plan(
 
     alignment_status: str | None = None
     final_subtitle_hashes: dict[str, str] = {}
-    reuse_cap = 3
+    reuse_cap = 2
     if is_v11:
         alignment_status, reuse_cap = validate_v11_contract(data, errors, warnings)
     if is_v20:
@@ -1573,6 +1573,8 @@ def validate_plan(
                     errors.append(f"{path}.audio.override_reason: required when single/decay uses motion_span")
                 if sound_form == "multi_hit" and trim_policy == "text_span" and not is_nonempty_string(audio.get("override_reason")):
                     errors.append(f"{path}.audio.override_reason: required when multi_hit uses text_span")
+                if sound_form == "typing" and trim_policy != "motion_span":
+                    errors.append(f"{path}.audio.trim_policy: typing must use motion_span")
                 if leading_policy == "preserve" and not is_nonempty_string(audio.get("override_reason")):
                     errors.append(f"{path}.audio.override_reason: required when preserving leading silence")
                 if leading_policy == "manual_review" and final_or_apply:

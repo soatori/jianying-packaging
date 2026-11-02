@@ -83,7 +83,7 @@ def _mirror_fields(value: Any, path: str = "") -> list[tuple[str, Any]]:
     if isinstance(value, dict):
         for key, item in value.items():
             child_path = f"{path}.{key}" if path else key
-            if key in {"text", "content", "base_content", "recognize_text"}:
+            if key in {"text", "content", "base_content", "recognize_text"} and _field_text(item) is not None:
                 fields.append((child_path, item))
             fields.extend(_mirror_fields(item, child_path))
     elif isinstance(value, list):
@@ -97,9 +97,14 @@ def _get_path(value: Any, path: str) -> tuple[bool, Any]:
     for part in path.replace("]", "").replace("[", ".").split("."):
         if not part:
             continue
-        if not isinstance(current, dict) or part not in current:
+        if isinstance(current, list):
+            if not part.isdigit() or int(part) >= len(current):
+                return False, None
+            current = current[int(part)]
+        elif isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
             return False, None
-        current = current[part]
     return True, current
 
 

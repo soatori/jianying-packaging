@@ -65,9 +65,11 @@ def check_sound_operations(plan: Any, catalog: Any, pools: Any, existing_audio: 
     checks: list[dict[str, Any]] = []
     selected_counts: dict[str, int] = {}
     sound_selection = plan.get("sound_selection", {}) if isinstance(plan.get("sound_selection"), dict) else {}
-    reuse_cap = sound_selection.get("reuse_cap", 3)
+    # 默认复用上限 2，与 references/motion-audio-audit.md 保持一致；
+    # 逐行动画场景下 3 次会让相邻段落读起来重复。
+    reuse_cap = sound_selection.get("reuse_cap", 2)
     if not isinstance(reuse_cap, int) or reuse_cap <= 0:
-        reuse_cap = 3
+        reuse_cap = 2
     groups = plan.get("groups")
     if not isinstance(groups, list):
         return result("packaging_sound_check", errors=["plan.groups must be an array"])

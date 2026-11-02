@@ -9,9 +9,10 @@ This document also carries the text-track copy/staging operations formerly owned
 1. Use a fresh clone by default and give it a purpose-specific, unique name. Use in-place editing only when the user explicitly requests it and the plan records the authorized exception and backup.
 2. Run `python scripts/packaging_tool.py prepare --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/staging.json`. A request to write staging authorizes this read-only candidate preparation. The CLI blocks unless content and subtitle alignment are approved.
 3. Review the change list and any HTML preview. Record approval for the exact preview hash in the plan. If the plan or source snapshot changes, prepare again.
-4. Run `python scripts/packaging_tool.py commit --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/staging.json --approved-prepared-hash <user-approved-hash>` only after the candidate and exact prepared-artifact hash are approved. Commit creates the default clone through `JianyingProject` and writes through its existing transaction API. Closing JianYing before commit is recommended; the editor close check is advisory.
+4. Run `python scripts/packaging_tool.py commit --draft <draft> --timeline <source> --plan <plan.json> --prepared temp/staging.json --approved-prepared-hash <user-approved-hash>` only after the candidate and exact prepared-artifact hash are approved. Commit creates the default clone through `JianyingProject` and writes through its existing transaction API. A running JianYing is an accepted condition, not a blocker: do not terminate it to obtain a file lock (see `jianying-editor/references/safe-mutation.md`); report the race warning and tell the user to reopen the draft from the list to see the change.
 5. Keep the source subtitle track unchanged and visible. Copy complete candidate sentences to an upper track, preserving approved segmentation. Use phrase-, word-, or character-level fragments only when the user explicitly requests that granularity.
 6. Mark `packaging_staging=reviewing`, identify the saved copy, and wait for the user to review emphasis, wording, timing, segmentation, overlap, and obstruction. Record any user edits against the current saved staging timeline.
+6b. **Covered-original cleanup is part of the same delivery, not a forgotten step.** A staging commit that leaves copies stacked on visible originals is an incomplete handoff. In the same turn as the commit report, either (a) execute the clone-only disable when the user has given a standing "复制即替换" instruction or approved it earlier, or (b) explicitly ask and mark the decision pending. Never report a staging clone without stating which of (a)/(b) happened and listing the disabled segment IDs. The validator blocks `disable_original` inside a staging plan, so run it as the documented follow-up transaction on the clone only.
 7. Final packaging requires a separate request and authorization. It must pass the final-subtitle, staging, and remapping gates before prepare and commit.
 
 Use `jianying-rough-cut/references/workflow-state.md` for the shared phase
@@ -27,7 +28,7 @@ user approves it; no final package follows automatically.
 | Staging clone after explicit approval | covered originals may use `"visible": false` | Require backup, read-back, and preview confirmation |
 | Final clone after approved staging | follow the approved `covered_subtitle_policy` | `delete` still requires explicit approval and backup |
 
-The phase controls the operation. Copying a sentence to an upper track does not by itself authorize hiding the source; the user must approve clone-only disabling after reviewing the overlay.
+The phase controls the operation. Copying a sentence to an upper track does not by itself authorize hiding the source; the user must approve clone-only disabling after reviewing the overlay. An explicit standing instruction from the user ("复制后把原文禁用" / "复制即替换") counts as that approval and must be exercised immediately in the same delivery pass, with backup and read-back still required.
 
 ## Plan-level operation contract
 
@@ -44,23 +45,37 @@ Before either mutation, re-decode the current saved source and target and compar
 - In staging, `copy_from_subtitle` must clear `extra_material_refs` and must not clone their material closure; motion and effects are attached later per the approved packaging plan. Final copies preserve the complete closure only when the final plan explicitly carries it.
 - When a copy's tail is extended (hold) into the next sentence's span, same-track time overlap will fail validation. Split alternating sentence positions across two upper tracks (e.g. sentences 1/3 on one track, 2 on the next).
 - Locate segments by `(track_id, start_us)`, never by text keyword: the subtitle track contains identical wording and will silently mismatch.
-- After explicit user approval, disable only the covered original segments on the clone with the editor-native per-segment `"visible": false` flag (what the JianYing eye-icon toggle writes; verified on 11.5). Require backup, read-back, and visual confirmation. `clip.transform.x = 99` (move off-canvas) is a reversible fallback only when the native flag is unavailable; it changes the stored display position and users may reject it. Track-level `is_hide` and `global_alpha = 0` do not work for text in 11.5. Never delete, and never disable the source timeline.
+- After explicit user approval, disable only the covered original segments on the clone with the editor-native per-segment `"visible": false` flag (what the JianYing eye-icon toggle writes; verified on 11.5) and mute them with `"volume": 0` when the row carries an audio-bearing material; hiding alone leaves a duplicated voice track. Require backup, read-back, and visual confirmation. `clip.transform.x = 99` (move off-canvas) is a reversible fallback only when the native flag is unavailable; it changes the stored display position and users may reject it. Track-level `is_hide` and `global_alpha = 0` do not work for text in 11.5. Never delete, and never disable the source timeline.
 - Group layout rule: keep the group's last sentence at the approved subtitle line position; raise only sentences that overlap an earlier held sentence. Derive spacing from the active project profile and verified subtitle transform. Preserve the user's manual per-line corrections on later passes; never flatten them back to uniform spacing.
 - Use side-by-side lines only when both fit inside the verified canvas safe area using the active font, transform, and rendered bounds. If those bounds are unavailable or uncertain, keep the group centered or send it for visual review.
 
 ## Same-screen group layout
 
+Unit of work: the **report line = one subtitle material/segment**, not one visual
+text row. A box may keep up to 2 (never more than 3) `\n` visual lines because
+JianYing folds inside the box natively. Two failure modes to refuse:
+
+- splitting every `\n` into its own time-staggered segment — the group turns into
+  a stacked wall of text that no longer reads as one event;
+- merging two report lines into one long material with a `replace`-style write —
+  an 11–13-character single line overflows the verified safe area.
+
+Same-screen pairing is at most two boxes per group, realized as two overlapping
+upper subtitle tracks (the held line extends to the group end, the later line
+keeps its own range). More than two simultaneous boxes is a grouping error.
+
 For a reviewed group whose last text ends at `group_end`:
 
 1. Set every copied segment in that group to `target_timerange.end == group_end` while preserving its start, text, material, style, and manual transform.
 2. Treat each extended segment as a timeline interval. If two intervals overlap on the same upper track, move the later segment to another upper review track; never enable same-track overlap.
-3. Reuse a previous upper track only when its last segment ends before the next segment starts. Create another upper review track when no previous track is free.
+3. Reuse a previous upper track only when its last segment ends before the next segment starts. Create another upper review track when no previous track is free. Stacking follows the `tracks` array order — the later the entry, the higher it renders — so a box that must sit under everything else is inserted after the video tracks and before the existing subtitle tracks, not appended at the end. `render_index` is a secondary within-scheme ordering field; confirm the resulting order on read-back and in preview instead of assuming either field alone decided it.
 4. Leave the source subtitle track untouched. Record `group_id`, `group_end`, assigned `track_id`, and whether each segment moved.
 5. Validate before write: all group ends match, all upper segments are visible, same-track overlap is zero, text/material IDs remain unique, and the source track hash is unchanged.
 6. After write, re-decode and inspect group start/middle/end frames. Stop if the expected simultaneous lines are missing, collide, obstruct the subject, or if a manual transform changed.
 
 ## Staging review checklist
 
+- Covered-original state is explicit: disabled IDs reported in the same pass as the commit, or the pending question flagged to the user. A doubled staging view with no stated decision fails this checklist.
 - Re-read the current saved staging timeline; treat any hash, duration, row-count, visibility, or transform change as a stale-plan condition.
 - Compare the selected group rows with the current upper tracks; record manual additions, removals, merges, and splits.
 - At each group start/middle/end, verify the complete text, `句N/M` label, safe area, subject obstruction, and expected layer count.

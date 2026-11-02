@@ -55,6 +55,29 @@ class SoundCatalogTests(unittest.TestCase):
         pool_result = MODULE.validate_pools(pools(), set(result["preset_ids"]) | {"synthetic-b", "synthetic-c"})
         self.assertTrue(pool_result["ok"], pool_result)
 
+    def test_typing_sound_form_is_accepted_by_catalog_and_pool(self):
+        data = catalog()
+        data["presets"][0].update(sound_form="typing", default_trim_policy="motion_span")
+        pool_data = pools()
+        pool_data["pools"][0]["candidates"][0]["sound_form"] = "typing"
+
+        catalog_result = MODULE.validate_catalog(data)
+        pool_result = MODULE.validate_pools(pool_data, set(catalog_result["preset_ids"]) | {"synthetic-b", "synthetic-c"})
+
+        self.assertTrue(catalog_result["ok"], catalog_result)
+        self.assertTrue(pool_result["ok"], pool_result)
+
+    def test_typing_default_trim_warns_when_not_motion_span(self):
+        for trim_policy in ("text_span", "natural", "manual_review"):
+            with self.subTest(trim_policy=trim_policy):
+                data = catalog()
+                data["presets"][0].update(sound_form="typing", default_trim_policy=trim_policy)
+
+                report = MODULE.validate_catalog(data)
+
+                self.assertTrue(report["ok"], report)
+                self.assertTrue(any("motion_span" in warning for warning in report["warnings"]))
+
     def test_leading_silence_cannot_exceed_duration(self):
         data = catalog()
         data["presets"][0]["leading_silence_us"] = 2000

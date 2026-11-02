@@ -66,7 +66,14 @@ def _slot_rotation(slot: dict[str, Any]) -> float:
     return float(rotation)
 
 
-def fit_slots_to_safe_zone(slots: list[dict[str, Any]], safe_zone: dict[str, Any]) -> dict[str, Any]:
+def fit_slots_to_safe_zone(
+    slots: list[dict[str, Any]],
+    safe_zone: dict[str, Any],
+    *,
+    collision_policy: str | None = None,
+) -> dict[str, Any]:
+    if collision_policy not in {None, "warn", "block", "intentional_overlap", "intentional_attachment"}:
+        raise VisualPreviewError("collision policy is invalid")
     bounds = {key: safe_zone.get(key) for key in ("x_min", "x_max", "y_min", "y_max")} if isinstance(safe_zone, dict) else {}
     if not bounds or not all(
         isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
@@ -99,6 +106,21 @@ def fit_slots_to_safe_zone(slots: list[dict[str, Any]], safe_zone: dict[str, Any
             y + rotated_height / 2,
         ))
 
+    collisions = []
+    if collision_policy in {"warn", "block"}:
+        for first in range(len(result)):
+            for second in range(first + 1, len(result)):
+                left, right, top, bottom = extents[first]
+                other_left, other_right, other_top, other_bottom = extents[second]
+                if left < other_right and other_left < right and top < other_bottom and other_top < bottom:
+                    collisions.append({
+                        "first_id": str(result[first].get("id", first)),
+                        "second_id": str(result[second].get("id", second)),
+                    })
+        if collisions and collision_policy == "block":
+            pairs = ", ".join(f"{item['first_id']} / {item['second_id']}" for item in collisions)
+            raise VisualPreviewError(f"measured text collision: slots overlap: {pairs}")
+
     left = min(item[0] for item in extents)
     right = max(item[1] for item in extents)
     top = min(item[2] for item in extents)
@@ -113,7 +135,7 @@ def fit_slots_to_safe_zone(slots: list[dict[str, Any]], safe_zone: dict[str, Any
     for slot in result:
         slot["x"] = round(float(slot["x"]) + shift_x, 8)
         slot["y"] = round(float(slot["y"]) + shift_y, 8)
-    return {"slots": result, "shift_x": round(shift_x, 8), "shift_y": round(shift_y, 8)}
+    return {"slots": result, "shift_x": round(shift_x, 8), "shift_y": round(shift_y, 8), "collisions": collisions}
 
 
 def build_html_preview(model: dict[str, Any]) -> str:

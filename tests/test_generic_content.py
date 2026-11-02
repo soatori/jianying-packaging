@@ -1,4 +1,5 @@
 import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,10 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"cannot load {SCRIPT}")
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+from packaging_tools.validators.generic_content import check_generic_content
 
 
 class GenericContentTests(unittest.TestCase):
@@ -56,6 +61,17 @@ class GenericContentTests(unittest.TestCase):
             path.write_text("project marker", encoding="utf-8")
             findings = MODULE.scan([path], forbidden_literals=["project marker"])
             self.assertTrue(any("forbidden_literal" in item for item in findings))
+
+    def test_unreadable_text_file_blocks_scan(self):
+        temp_root = Path(__file__).resolve().parents[1] / "temp"
+        with tempfile.TemporaryDirectory(prefix="generic-content-", dir=temp_root) as td:
+            path = Path(td) / "unreadable.md"
+            path.write_bytes(b"\xff")
+
+            report = check_generic_content([path])
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(str(path) in error for error in report["input_errors"]))
 
 
 if __name__ == "__main__":

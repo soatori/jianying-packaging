@@ -92,6 +92,14 @@ class VisualPreviewTests(unittest.TestCase):
         self.assertAlmostEqual(fitted["shift_y"], -0.15, places=8)
         self.assertAlmostEqual(fitted["slots"][0]["y"], 0.6, places=8)
 
+    def test_invalid_collision_policy_is_rejected(self):
+        with self.assertRaisesRegex(VisualPreviewError, "collision policy"):
+            fit_slots_to_safe_zone(
+                [{"id": "text", "x": 0, "y": 0, "bounds": {"width": 0.2, "height": 0.1}}],
+                {"x_min": -0.8, "x_max": 0.8, "y_min": -0.8, "y_max": 0.8},
+                collision_policy="unspecified",
+            )
+
     def test_html_preview_escapes_text_and_marks_native_animation_as_unverified(self):
         html = build_html_preview({
             "canvas_width": 1080,

@@ -401,6 +401,26 @@ class DraftApplyTests(unittest.TestCase):
             }
         return self.commit(plan, prepared_path, temp_root, **kwargs)
 
+    def _final_layout_overlap_report(self, collision: str):
+        source = draft_value()
+        template = draft_value()
+        add_motion_payload(template)
+        template["tracks"][0]["segments"][0]["id"] = "template-q"
+        plan = final_layout_plan()
+        second = copy.deepcopy(plan["groups"][0]["visual"][0])
+        second.update(text="Synthetic A", text_ref="U2", text_hash=text_hash("Synthetic A"))
+        plan["groups"][0]["visual"].append(second)
+        layout = plan["groups"][0]["layout"]
+        layout["slots"][0]["offset"] = {"dx": 0.0, "dy": 0.0}
+        layout["slots"][1]["offset"] = {"dx": 0.0, "dy": 0.01}
+        layout["constraints"]["collision"] = collision
+
+        with patch.object(draft_apply, "measure_text_lines", return_value=[{"text": "Synthetic", "width_px": 200.0, "height_px": 100.0}]):
+            return draft_apply.transform_packaging_plan(
+                copy.deepcopy(source), plan, source_value=source,
+                timeline_values={"manual": source, "template": template},
+            )
+
     def test_default_temp_root_is_skill_root_temp(self):
         self.assertEqual(draft_apply._default_temp_root(), Path(__file__).resolve().parents[1] / "temp")
 
@@ -1211,6 +1231,49 @@ class DraftApplyTests(unittest.TestCase):
         self.assertLessEqual(copied["clip"]["transform"]["y"], 0.8)
         self.assertEqual(material["transform"]["x"], copied["clip"]["transform"]["x"])
         self.assertFalse(any("safe zone" in warning for warning in report["warnings"]))
+
+    def test_final_layout_blocks_measured_text_overlap(self):
+        report = self._final_layout_overlap_report("block")
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("collision" in error for error in report["errors"]))
+
+    def test_final_layout_warns_measured_text_overlap(self):
+        report = self._final_layout_overlap_report("warn")
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(any("overlap" in warning for warning in report["warnings"]))
+
+    def test_final_layout_warns_on_overlap_introduced_by_overrides(self):
+        source = draft_value()
+        template = draft_value()
+        add_motion_payload(template)
+        template["tracks"][0]["segments"][0]["id"] = "template-q"
+        plan = final_layout_plan()
+        second = copy.deepcopy(plan["groups"][0]["visual"][0])
+        second.update(text="Synthetic A", text_ref="U2", text_hash=text_hash("Synthetic A"))
+        plan["groups"][0]["visual"].append(second)
+        plan["groups"][0]["layout"]["slots"][1]["offset"] = {"dx": 0.0, "dy": 0.3}
+        for visual in plan["groups"][0]["visual"]:
+            visual["overrides"] = {
+                "position_x": {"mode": "absolute", "value": 0.0},
+                "position_y": {"mode": "absolute", "value": 0.0},
+            }
+
+        with patch.object(draft_apply, "measure_text_lines", return_value=[{"text": "Synthetic", "width_px": 200.0, "height_px": 100.0}]):
+            report = draft_apply.transform_packaging_plan(
+                copy.deepcopy(source), plan, source_value=source,
+                timeline_values={"manual": source, "template": template},
+            )
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(any("overlap" in warning for warning in report["warnings"]))
+
+    def test_final_layout_allows_declared_intentional_overlap(self):
+        report = self._final_layout_overlap_report("intentional_overlap")
+
+        self.assertTrue(report["ok"], report)
+        self.assertFalse(any("overlap" in warning for warning in report["warnings"]))
 
     def test_final_layout_fails_closed_when_font_metrics_are_missing(self):
         source = draft_value()
