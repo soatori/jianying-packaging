@@ -27,7 +27,39 @@ from packaging_tools.verification import verify_packaging_result
 from packaging_tools.validators.generic_content import check_generic_content
 from packaging_tool import _parser as packaging_parser
 from packaging_tool import _preflight
+from packaging_tool import _run_editor_readonly
 from packaging_tool import main as packaging_main
+
+
+FAKE_EDITOR_STUB = '''"""Fixture fake jianying_project.py — CLI contract stub for preflight tests."""
+import json
+import sys
+
+
+def main(argv):
+    command = argv[0] if argv else "probe"
+    report = {
+        "ok": True,
+        "errors": [],
+        "warnings": [],
+        "replica_manifest": {"replicas": [], "errors": [], "count": 0},
+    }
+    if command == "inspect":
+        report["timeline"] = {"id": "T1", "name": "fixture"}
+    print(json.dumps(report))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+
+def make_fake_editor_root(base: Path) -> Path:
+    scripts = base / "fake-editor" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "jianying_project.py").write_text(FAKE_EDITOR_STUB, encoding="utf-8")
+    return base / "fake-editor"
 
 
 class PackagingToolTests(unittest.TestCase):
@@ -136,10 +168,59 @@ class PackagingToolTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(any("candidate_pool_incomplete" in error for error in report["errors"]))
 
+    def test_final_apply_rejects_pool_below_three_candidates(self):
+        pool = {
+            "pool_id": "pop-default",
+            "min_candidates": 2,
+            "candidates": [
+                {"preset_id": "pop-1", "status": "verified"},
+                {"preset_id": "pop-2", "status": "verified"},
+            ],
+        }
+        group = {"id": "g1", "audio": {"action": "add", "candidate_pool_ref": "pop-default"}}
+        final = {"execution": {"phase": "final"}, "groups": [group]}
+        report = check_sound_operations(final, {"presets": []}, {"pools": [pool]})
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("candidate_pool_incomplete" in error for error in report["errors"]), report)
+
+        apply_plan = {"execution": {"mode": "apply"}, "groups": [group]}
+        report = check_sound_operations(apply_plan, {"presets": []}, {"pools": [pool]})
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("candidate_pool_incomplete" in error for error in report["errors"]), report)
+
+        review = {"groups": [group]}
+        report = check_sound_operations(review, {"presets": []}, {"pools": [pool]})
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(any("candidate_pool_incomplete" in warning for warning in report["warnings"]), report)
+
     def test_text_hash_mismatch_blocks_resolution(self):
         plan = {"groups": [{"id": "g1", "visuals": [{"text": "错误", "text_ref": "u1", "text_hash": "sha256:bad"}]}]}
         report = resolve_text_hashes(plan, [{"unit_id": "u1", "text": "正确", "text_hash": "sha256:correct"}])
         self.assertFalse(report["ok"])
+
+    def test_resolve_manifest_ref_still_enforced_when_listed_as_auxiliary(self):
+        text = "正确"
+        manifest = [{"unit_id": "u1", "text": text, "text_hash": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()}]
+        wrong = "错误"
+        plan = {"groups": [{"id": "g1", "auxiliary_text_refs": ["u1"], "visual": [
+            {"object_type": "text", "text": wrong, "text_ref": "u1", "text_hash": "sha256:" + hashlib.sha256(wrong.encode("utf-8")).hexdigest()}]}]}
+        report = resolve_text_hashes(plan, manifest)
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("text_mismatch" in error or "differs" in error for error in report["errors"]),
+            report,
+        )
+
+    def test_resolve_accepts_auxiliary_ref_with_self_hash(self):
+        mark = "？"
+        manifest = [{"unit_id": "u1", "text": "正确", "text_hash": "sha256:correct"}]
+        plan = {"groups": [{"id": "g1", "auxiliary_text_refs": ["mark-1"], "visual": [
+            {"object_type": "text", "text": mark, "text_ref": "mark-1", "text_hash": "sha256:" + hashlib.sha256(mark.encode("utf-8")).hexdigest()}]}]}
+        report = resolve_text_hashes(plan, manifest)
+        self.assertTrue(report["ok"], report)
+        tampered = {"groups": [{"id": "g1", "auxiliary_text_refs": ["mark-1"], "visual": [
+            {"object_type": "text", "text": mark, "text_ref": "mark-1", "text_hash": "sha256:bad"}]}]}
+        self.assertFalse(resolve_text_hashes(tampered, manifest)["ok"])
 
     def test_pending_order_remap_blocks_subtitle_resolution(self):
         plan = {"comparison": {"source_order_hash": "sha256:a", "target_order_hash": "sha256:b", "remap_status": "pending"}, "groups": []}
@@ -224,7 +305,7 @@ class PackagingToolTests(unittest.TestCase):
                 report = _preflight(SimpleNamespace(
                     draft=str(draft),
                     timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                    editor_root=str(make_fake_editor_root(Path(directory))),
                 ))
 
         self.assertTrue(report["ok"], report)
@@ -253,7 +334,7 @@ class PackagingToolTests(unittest.TestCase):
                 report = _preflight(SimpleNamespace(
                     draft=str(draft),
                     timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                    editor_root=str(make_fake_editor_root(Path(directory))),
                 ))
 
         self.assertFalse(report["ok"], report)
@@ -280,7 +361,7 @@ class PackagingToolTests(unittest.TestCase):
                 report = _preflight(SimpleNamespace(
                     draft=str(draft),
                     timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                    editor_root=str(make_fake_editor_root(Path(directory))),
                 ))
 
         self.assertFalse(report["ok"], report)
@@ -307,7 +388,7 @@ class PackagingToolTests(unittest.TestCase):
                 report = _preflight(SimpleNamespace(
                     draft=str(draft),
                     timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                    editor_root=str(make_fake_editor_root(Path(directory))),
                 ))
 
         self.assertFalse(report["ok"], report)
@@ -324,11 +405,19 @@ class PackagingToolTests(unittest.TestCase):
                 report = _preflight(SimpleNamespace(
                     draft=str(draft),
                     timeline="T1",
-                    editor_root=r"C:\Users\11\.agents\skills\jianying-editor-skill",
+                    editor_root=str(make_fake_editor_root(Path(directory))),
                 ))
 
         self.assertFalse(report["ok"], report)
         self.assertTrue(any("editor crashed" in error for error in report["errors"]))
+
+    def test_editor_cli_missing_error_names_escape_hatches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(FileNotFoundError) as ctx:
+                _run_editor_readonly(Path(directory), ["probe", "draft"])
+        message = str(ctx.exception)
+        self.assertIn("--editor-root", message)
+        self.assertIn("JIANYING_EDITOR_ROOT", message)
 
     def test_canonical_visual_hash_and_legacy_alias_conflict_are_fail_closed(self):
         text = "规范文本"
@@ -386,7 +475,11 @@ class PackagingToolTests(unittest.TestCase):
             "audio": {"action": "add_asset", "candidate_pool_ref": "p1", "selected_preset_id": "s1", "motion_family": "reveal", "sound_form": "single_hit", "trim_policy": "text_span", "leading_silence_policy": "skip", "leading_silence_us": 0, "text_range": {"start_us": 100, "end_us": 200}, "target_range": {"start_us": 100, "end_us": 200}},
         }]}
         catalog = {"presets": [{"preset_id": "s1", "status": "verified", "sound_form": "single_hit", "motion_family": "reveal", "duration_us": 500}]}
-        pools = {"pools": [{"pool_id": "p1", "status": "verified", "motion_family": "reveal", "min_candidates": 1, "candidates": [{"preset_id": "s1", "status": "verified", "sound_form": "single_hit", "motion_family": "reveal"}]}]}
+        pools = {"pools": [{"pool_id": "p1", "status": "verified", "motion_family": "reveal", "min_candidates": 1, "candidates": [
+            {"preset_id": "s1", "status": "verified", "sound_form": "single_hit", "motion_family": "reveal"},
+            {"preset_id": "s2", "status": "verified", "sound_form": "single_hit", "motion_family": "reveal"},
+            {"preset_id": "s3", "status": "verified", "sound_form": "single_hit", "motion_family": "reveal"},
+        ]}]}
         return plan, catalog, pools
 
     def test_sound_safety_gates_cover_pool_status_ranges_collision_and_reuse(self):

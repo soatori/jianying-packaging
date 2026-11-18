@@ -23,6 +23,13 @@ from tests.test_plan_validator import valid_plan_v12
 from tests.test_plan_validator import synthetic_sound_catalog, synthetic_sound_pools
 
 
+def resolve_editor_root() -> Path:
+    env = os.environ.get("JIANYING_EDITOR_ROOT", "").strip()
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2] / "jianying-editor-skill"
+
+
 class DraftApplyTests(unittest.TestCase):
     def apply_with_approved_preview(self, plan: dict, **kwargs):
         kwargs.pop("apply", None)
@@ -48,12 +55,66 @@ class DraftApplyTests(unittest.TestCase):
         self.assertTrue(callable(getattr(draft_apply, "transform_packaging_plan", None)))
 
     def test_adapter_loads_existing_editor_transaction_api_without_editing_it(self):
-        editor_root = Path(r"C:\Users\11\.agents\skills\jianying-editor-skill")
+        editor_root = resolve_editor_root()
+        if not (editor_root / "scripts" / "jianying_project.py").is_file():
+            self.skipTest("integration environment missing: jianying-editor-skill scripts/jianying_project.py")
         api = draft_apply._load_editor_api(editor_root)
 
         self.assertTrue(callable(api.JianyingProject.clone_timeline))
         self.assertTrue(callable(api.JianyingProject._write_content))
         self.assertTrue(callable(api.validate_content))
+
+    def test_missing_assert_editor_closed_is_hard_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = FakeProject(Path(directory), draft_value())
+            plan = staging_plan(str(Path(directory).resolve()))
+            saved = FakeProject.assert_editor_closed
+            del FakeProject.assert_editor_closed
+            try:
+                report = self.apply_with_approved_preview(
+                    plan,
+                    draft_path=directory,
+                    timeline="manual",
+                    editor_root=Path("unused"),
+                    sound_catalog={"presets": []},
+                    sound_pools={"pools": []},
+                    apply=True,
+                    project=project,
+                    editor_api=FakeEditorApi,
+                )
+            finally:
+                FakeProject.assert_editor_closed = saved
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("assert_editor_closed" in error for error in report["errors"]), report)
+        self.assertEqual(project.clone_calls, [])
+        self.assertEqual(project.write_calls, [])
+
+    def test_missing_write_content_is_hard_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = FakeProject(Path(directory), draft_value())
+            plan = staging_plan(str(Path(directory).resolve()))
+            saved = FakeProject.write_content
+            del FakeProject.write_content
+            try:
+                report = self.apply_with_approved_preview(
+                    plan,
+                    draft_path=directory,
+                    timeline="manual",
+                    editor_root=Path("unused"),
+                    sound_catalog={"presets": []},
+                    sound_pools={"pools": []},
+                    apply=True,
+                    project=project,
+                    editor_api=FakeEditorApi,
+                )
+            finally:
+                FakeProject.write_content = saved
+
+        self.assertFalse(report["ok"], report)
+        self.assertTrue(any("write_content" in error for error in report["errors"]), report)
+        self.assertEqual(project.clone_calls, [])
+        self.assertEqual(project.write_calls, [])
 
     def test_staging_copy_from_subtitle_drops_material_side_effects_and_preserves_source(self):
         source = draft_value()
@@ -1488,7 +1549,10 @@ class DraftApplyTests(unittest.TestCase):
             root = Path(directory)
             source = draft_value()
             write_editor_draft(root, source)
-            api = draft_apply._load_editor_api(Path(r"C:\Users\11\.agents\skills\jianying-editor-skill"))
+            editor_root = resolve_editor_root()
+            if not (editor_root / "scripts" / "jianying_project.py").is_file():
+                self.skipTest("integration environment missing: jianying-editor-skill scripts/jianying_project.py")
+            api = draft_apply._load_editor_api(editor_root)
             project = api.JianyingProject(root)
             project._assert_editor_closed = lambda: None
             plan = staging_plan(str(root.resolve()))
@@ -1497,7 +1561,7 @@ class DraftApplyTests(unittest.TestCase):
                 plan,
                 draft_path=str(root),
                 timeline="manual",
-                editor_root=Path(r"C:\Users\11\.agents\skills\jianying-editor-skill"),
+                editor_root=editor_root,
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
                 apply=True,
@@ -1521,7 +1585,10 @@ class DraftApplyTests(unittest.TestCase):
             source = draft_value()
             add_motion_payload(source)
             write_editor_draft(root, source)
-            api = draft_apply._load_editor_api(Path(r"C:\Users\11\.agents\skills\jianying-editor-skill"))
+            editor_root = resolve_editor_root()
+            if not (editor_root / "scripts" / "jianying_project.py").is_file():
+                self.skipTest("integration environment missing: jianying-editor-skill scripts/jianying_project.py")
+            api = draft_apply._load_editor_api(editor_root)
             project = api.JianyingProject(root)
             project._assert_editor_closed = lambda: None
             plan = final_apply_plan(str(root.resolve()))
@@ -1530,7 +1597,7 @@ class DraftApplyTests(unittest.TestCase):
                 plan,
                 draft_path=str(root),
                 timeline="manual",
-                editor_root=Path(r"C:\Users\11\.agents\skills\jianying-editor-skill"),
+                editor_root=editor_root,
                 sound_catalog={"presets": []},
                 sound_pools={"pools": []},
                 apply=True,
@@ -2134,6 +2201,9 @@ class FakeProject:
     def _assert_editor_closed(self) -> str | None:
         return None
 
+    def assert_editor_closed(self) -> str | None:
+        return self._assert_editor_closed()
+
     def clone_timeline(self, selector: str, name: str, activate: bool = False) -> dict:
         source = self.resolve_timeline(selector)
         target_id = "T2"
@@ -2153,6 +2223,9 @@ class FakeProject:
         if timeline_id in self.clone_snapshots and self.values[timeline_id] == self.clone_snapshots[timeline_id]:
             self.fail_decode_while_target_is_modified = False
         return {"backup": "synthetic-write-backup", "files_written": [f"{timeline_id}/draft_content.json"]}
+
+    def write_content(self, timeline_id: str, value: dict) -> dict:
+        return self._write_content(timeline_id, value)
 
 
 if __name__ == "__main__":

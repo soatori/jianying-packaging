@@ -10,7 +10,7 @@ The layout registry is a reusable geometry vocabulary, not a collection of proje
 - A slot may be relative to the group origin or another slot.
 - A group may contain any number of slots; two-slot examples are not a limit.
 
-Do not hardcode a canvas height or copy an absolute transform from another timeline. If a legacy absolute template is unavoidable, mark it `legacy_absolute`, require a visual verification record, and use `manual_review` as the fallback.
+Do not hardcode a canvas height or copy an absolute transform from another timeline. If a legacy absolute template is unavoidable, mark it `legacy_absolute`, require a visual verification record, and use `manual_review` as the fallback. `legacy_absolute` is allowed at the plan level only; the layout registry itself only accepts `relative_template` entries.
 
 ## Slot contract
 

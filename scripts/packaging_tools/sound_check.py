@@ -113,8 +113,9 @@ def check_sound_operations(plan: Any, catalog: Any, pools: Any, existing_audio: 
             minimum = pool.get("min_candidates", 3)
             if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 0:
                 errors.append(f"group {group.get('id')}: candidate pool min_candidates is invalid")
-                minimum = 0
-            if len(candidate_ids) < minimum or not candidate_ids:
+                minimum = 3
+            floor = max(3, minimum)
+            if len(candidate_ids) < floor or not candidate_ids:
                 message = f"group {group.get('id')}: candidate_pool_incomplete"
                 (errors if final_or_apply else warnings).append(message)
             if pool.get("status") not in {None, "verified"}:

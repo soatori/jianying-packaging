@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "unknown"}
+SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "typing", "unknown"}
 TRIM_POLICIES = {"text_span", "motion_span", "natural", "manual_review"}
 SOUND_STATUSES = {"verified", "candidate", "needs_listen", "blocked"}
 LEADING_POLICIES = {"skip", "preserve", "manual_review"}

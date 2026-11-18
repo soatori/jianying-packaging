@@ -758,6 +758,63 @@ class ValidatePackagingPlanTests(unittest.TestCase):
 
         self.assertTrue(any("text_hash" in error for error in errors), errors)
 
+    def test_auxiliary_ref_cannot_shadow_manifest_unit(self) -> None:
+        shadow = valid_plan_v12()
+        shadow["source"]["final_subtitle_units"].append({
+            "unit_id": "U3",
+            "text_hash": VALIDATOR.sha256_text("Synthetic U3"),
+            "status": "approved",
+        })
+        shadow["groups"][0]["auxiliary_text_refs"] = ["U3"]
+        errors, _ = validate_for_test(shadow)
+        self.assertTrue(any("shadow" in error for error in errors), errors)
+
+        overlap = valid_plan_v12()
+        overlap["groups"][0]["auxiliary_text_refs"] = ["U1"]
+        errors, _ = validate_for_test(overlap)
+        self.assertTrue(any("semantic_unit_refs" in error for error in errors), errors)
+
+    def test_auxiliary_text_hash_must_be_self_hash(self) -> None:
+        plan = valid_plan_v12()
+        group = plan["groups"][0]
+        group["auxiliary_text_refs"] = ["mark-1"]
+        visual = group["visual"][0]
+        visual.update(
+            text="Synthetic mark",
+            text_ref="mark-1",
+            text_hash=VALIDATOR.sha256_text("other text"),
+        )
+        errors, _ = validate_for_test(plan)
+        self.assertTrue(any("self-hash" in error for error in errors), errors)
+
+        visual["text_hash"] = VALIDATOR.sha256_text("Synthetic mark")
+        errors, _ = validate_for_test(plan)
+        self.assertFalse(any("self-hash" in error for error in errors), errors)
+
+    def test_v12_audio_requires_selection_basis_and_reuse_count(self) -> None:
+        missing_basis = valid_plan_v12()
+        missing_basis["groups"][0]["audio"].pop("selection_basis", None)
+        errors, _ = validate_for_test(missing_basis)
+        self.assertTrue(any("audio.selection_basis" in error for error in errors), errors)
+
+        missing_count = valid_plan_v12()
+        missing_count["groups"][0]["audio"].pop("reuse_count", None)
+        errors, _ = validate_for_test(missing_count)
+        self.assertTrue(any("audio.reuse_count" in error for error in errors), errors)
+
+        inconsistent = valid_plan_v12()
+        inconsistent["groups"][0]["audio"]["reuse_count"] = 2
+        errors, _ = validate_for_test(inconsistent)
+        self.assertTrue(any("reuse_count" in error for error in errors), errors)
+
+    def test_v12_rejects_legacy_covered_subtitle_policy(self) -> None:
+        for legacy in ("disable", "keep", "delete"):
+            with self.subTest(policy=legacy):
+                plan = valid_plan_v12()
+                plan["execution"]["covered_subtitle_policy"] = legacy
+                errors, _ = validate_for_test(plan)
+                self.assertTrue(any("covered_subtitle_policy" in error for error in errors), errors)
+
     def test_clone_template_with_multiple_segments_requires_selected_segment(self) -> None:
         plan = valid_plan_v12()
         plan["presets"][0]["template_source"]["segment_ids"] = ["segment-a", "segment-b"]

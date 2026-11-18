@@ -2,13 +2,13 @@
 
 Creating or updating a staging timeline requires an approved content pass and an approved subtitle-alignment plan. It creates a reversible working timeline and an upper review layer.
 
-This document also carries the text-track copy/staging operations formerly owned by a standalone `jianying-track-copy-staging` skill (now merged here). The schema 1.2 `packaging_tool.py apply` adapter translates approved operations and uses `jianying-editor`'s existing transactional project API; do not use `jianying-editor apply-plan` for packaging.
+This document also carries the text-track copy/staging operations formerly owned by a standalone `jianying-track-copy-staging` skill (now merged here). The schema 1.2 `packaging_tool.py apply` adapter translates approved operations and uses `jianying-editor`'s existing transactional project API; do not use the editor's `keep_blocks` application surface for packaging (pending a contract-versioned release).
 
 ## Staging sequence
 
 1. Use a fresh clone by default and give it a purpose-specific, unique name. Tell the user which copy contains the staging surface. Use in-place editing only when the user explicitly requests it and the plan records the authorized exception and backup. Ask about the target only when the user's instruction leaves it ambiguous. A request to create or update staging authorizes that staging write; by itself, it does not authorize final application.
 2. Apply the schema 1.2 staging plan through `python scripts/packaging_tool.py apply --draft <draft> --timeline <source> --plan <plan.json> --apply`. The adapter creates the default clone through `JianyingProject` and writes the upper review layer through its existing transaction API. It blocks unless content and subtitle alignment are approved.
-   Closing JianYing before an apply is still recommended. The editor transaction's close check is advisory: a warning is carried in the apply report while the clone/write/read-back transaction continues. Dry-runs do not perform this close check.
+   Close JianYing before an apply. When JianYing is running, `--apply` is blocked before any write; dry-runs do not perform this close check.
 3. Keep the source subtitle track unchanged and visible.
 4. Copy complete candidate sentences to an upper track, preserving the approved sentence segmentation. Use phrase-, word-, or character-level fragments only when the user explicitly requests that granularity.
 5. Mark `packaging_staging=reviewing` and let the user review emphasis, wording, timing, segmentation, overlap, and obstruction.
@@ -78,7 +78,7 @@ For a reviewed group whose last text ends at `group_end`:
 - At each group start/middle/end, verify the complete text, `句N/M` label, safe area, subject obstruction, and expected layer count.
 - Verify same-track overlap is zero and that moved segments are on the recorded upper tracks.
 - Verify the source timeline still has the original subtitle text and visibility. Verify clone-only hides with both read-back and preview.
-- Confirm the backup path, replica validation, source hash preservation, and an `ir-diff`/frame comparison with no unplanned changes.
+- Confirm the backup path, replica validation, source hash preservation, and a `diff`/frame comparison with no unplanned changes.
 - Stop on stale locators, text mismatch, collision, source mutation, missing backup, or an unresolved speaker/listening issue.
 
 ## Editor state and write-back pitfalls

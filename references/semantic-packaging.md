@@ -92,7 +92,10 @@ Choose sound from both motion and meaning:
 ### Motion-family candidates
 
 Build animation and SFX candidates around the visible motion family. These are
-generic search families, not Jianying preset names or fixed pairings:
+generic search families, not Jianying preset names or fixed pairings. They are
+also not the plan validator's `MOTION_SOUND_FAMILIES` vocabulary
+(`pop`/`reveal`/`typing`/...), which keys `audio.motion_family` and pool
+membership:
 
 | Motion family | Typical use | SFX families to audition |
 |---|---|---|

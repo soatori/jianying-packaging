@@ -7,7 +7,7 @@ python scripts/packaging_tool.py validate plan <plan.json>
 python scripts/packaging_tool.py apply --draft <draft> --timeline <source> --plan <plan.json>
 ```
 
-The plan is a semantic and execution contract. It may contain exact runtime locators supplied by the user, but this reference and its examples must remain generic. The packaging adapter owns schema 1.2 plan translation; encryption, replica discovery, backup, low-level transaction writes, and read-back use the existing `jianying-editor` API. Its `apply-plan` command remains limited to `keep_blocks`.
+The plan is a semantic and execution contract. It may contain exact runtime locators supplied by the user, but this reference and its examples must remain generic. The packaging adapter owns schema 1.2 plan translation; encryption, replica discovery, backup, low-level transaction writes, and read-back use the existing `jianying-editor` API. Its `keep_blocks` application surface is pending a contract-versioned release.
 
 ## Schema versions
 
@@ -78,7 +78,16 @@ Execution phases:
 }
 ```
 
-`source.content_pass` may be `stable` or `approved`, and `source.subtitle_alignment.status` may be `stable` or `approved` for a review-only plan. `stable` is not user approval. For every schema 1.2 write plan (`execution.mode: apply`), the validator requires both statuses to be `approved` for staging and final phases. Final also requires `staging.review_status: approved`, an approved final-subtitle reference, and `comparison.remap_status` of `not_required` or `verified`. `pending` and `blocked` stop final execution. Validator success does not grant conversational write authorization. The `apply` command requires a second `--apply` flag for disk writes; the Agent must still verify the user's authorization for the exact phase and target. A 1.2 execution context must include every listed stop condition.
+State × phase gates (merged matrix; aligned with the plan validator):
+
+| `execution.mode` | `execution.phase` | `source.content_pass` | `subtitle_alignment.status` | `staging.review_status` | `comparison.remap_status` |
+|---|---|---|---|---|---|
+| review | staging | stable or approved | stable or approved | — | — |
+| review | final | stable or approved | approved | approved | not_required or verified |
+| apply | staging | approved | approved | — | — |
+| apply | final | approved | approved | approved | not_required or verified |
+
+`stable` is not user approval. A `1.2` final plan also requires an approved final-subtitle reference. `pending` and `blocked` remap stop final execution. Validator success does not grant conversational write authorization. The `apply` command requires a second `--apply` flag for disk writes; the Agent must still verify the user's authorization for the exact phase and target. A 1.2 execution context must include every listed stop condition.
 
 `source.final_subtitle_units` is the approved per-unit text-hash manifest. Its `text_hash` is the SHA-256 hash of the exact UTF-8 final subtitle text. Schema 1.2 text visuals must carry the matching `text_ref` and `text_hash`; every text `copy_from_subtitle` operation also requires `text`, and its hash must match that exact UTF-8 text even when `text_ref` names an auxiliary mark. Semantic subtitle references must additionally match the corresponding `source.final_subtitle_units` hash. A mismatch is `text_mismatch` and blocks final/apply.
 
@@ -161,7 +170,7 @@ For 1.2, every slot must declare `ref_type`. `subtitle_unit` references must be 
 
 Every schema 1.2 text `copy_from_subtitle` operation must supply `text`, `text_ref`, and `text_hash`. Other text operations that supply `text` must also supply `text_ref` and `text_hash`. Subtitle-unit references must resolve through `source.final_subtitle_units`; auxiliary marks must be declared in `auxiliary_text_refs`.
 
-The template registry defines generic slot relationships; it must not contain project text, project timestamps, draft paths, or project IDs. Final/apply automatic layout requires numeric `safe_zone` bounds in normalized canvas coordinates and `project_profile.canvas_width`/`canvas_height`. Bounds use the same normalized coordinate space as relative slots. The adapter measures each current text line with the font file and size in its material, converts glyph bounds to normalized coordinates, and fits the planned operation inside the safe zone. Missing or unreliable font metrics block automated layout. A symbolic safe-zone name remains review-only; it cannot authorize a write.
+The template registry defines generic slot relationships; it must not contain project text, project timestamps, draft paths, or project IDs. Final/apply automatic layout requires numeric `safe_zone` bounds in normalized canvas coordinates and `project_profile.canvas_width`/`canvas_height`. `project_profile.max_chars_per_line` falls back to `13`, which is a skill implementation default (see `plan_impl.py`/`text_ops.py`), not a Jianying constraint; line length is otherwise a project-profile decision. `layout.constraints.collision` accepts `warn`, `block`, `intentional_overlap`, or `intentional_attachment`. Bounds use the same normalized coordinate space as relative slots. The adapter measures each current text line with the font file and size in its material, converts glyph bounds to normalized coordinates, and fits the planned operation inside the safe zone. Missing or unreliable font metrics block automated layout. A symbolic safe-zone name remains review-only; it cannot authorize a write.
 
 Manual transforms are preserved when the plan does not include a layout change. If `layout.pattern` is `diagonal_stagger`, positions may be staggered across lines but text rotation must stay at zero. Preview and apply use the same candidate geometry; an explicit override that moves text outside the safe zone blocks. A layout operation must identify an existing unique topmost text track for auxiliary text, and the adapter blocks same-track overlap rather than creating a track.
 
@@ -253,7 +262,7 @@ For a non-`none` audio action, require:
 }
 ```
 
-`single_hit` and `decay` default to `text_span`; `multi_hit` and typing-like sounds default to `motion_span`. A known leading silence must be skipped or explicitly preserved with a reason. Do not stretch or loop unless the catalog permits it. A group has at most one primary sound.
+`single_hit` and `decay` default to `text_span`; `multi_hit` and typing-like sounds default to `motion_span`. A known leading silence must be skipped or explicitly preserved with a reason. Do not stretch or loop unless the catalog permits it. A group has at most one primary sound. For schema 1.2, `selection_basis` and `reuse_count` are required on every non-`none` audio action; `reuse_count` must equal the number of groups selecting that sound asset and must not exceed the reuse cap (`sound_selection.reuse_cap`, default `3`).
 
 `text_span` requires `text_range`; `motion_span` requires a valid group motion event. A final apply plan must select a verified candidate from a pool containing at least three unique candidates. The pool is a choice set, not simultaneous playback.
 

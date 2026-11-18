@@ -55,7 +55,7 @@ LAYOUT_REF_TYPES = {"subtitle_unit", "auxiliary_mark"}
 LAYOUT_ALIGNMENTS = {"left", "center", "right", "top", "middle", "bottom"}
 TRIM_POLICIES = {"text_span", "motion_span", "natural", "manual_review"}
 LEADING_SILENCE_POLICIES = {"skip", "preserve", "manual_review"}
-SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "unknown"}
+SOUND_FORMS = {"single_hit", "decay", "multi_hit", "loop", "ambience", "typing", "unknown"}
 SOUND_STATUSES = {"verified", "candidate", "needs_listen", "blocked"}
 MOTION_SOUND_FAMILIES = {
     "pop", "reveal", "typing", "sweep", "impact", "mechanical_open",
@@ -633,8 +633,9 @@ def _validate_sound_pool(
     if not is_int(minimum) or minimum < 0:
         errors.append(f"{path}.candidate_pool.min_candidates: must be a non-negative integer")
         minimum = 3
-    if len(candidate_ids) < minimum:
-        message = f"{path}.candidate_pool: candidate_pool_incomplete ({len(candidate_ids)}/{minimum})"
+    floor = max(3, minimum)
+    if len(candidate_ids) < floor:
+        message = f"{path}.candidate_pool: candidate_pool_incomplete ({len(candidate_ids)}/{floor})"
         if final_or_apply:
             errors.append(message)
         else:
@@ -1018,8 +1019,11 @@ def validate_plan(
             errors.append(
                 "execution.covered_subtitle_policy: unsupported policy"
             )
-        elif covered_policy in {"disable", "delete"}:
-            warnings.append("execution.covered_subtitle_policy: legacy policy; prefer preserve or clone-only policy")
+        elif covered_policy in {"disable", "keep", "delete"}:
+            if is_v12:
+                errors.append("execution.covered_subtitle_policy: legacy value is not allowed in schema 1.2")
+            elif covered_policy in {"disable", "delete"}:
+                warnings.append("execution.covered_subtitle_policy: legacy policy; prefer preserve or clone-only policy")
         if is_v11 and covered_policy in {"disable", "keep", "delete"}:
             errors.append("execution.covered_subtitle_policy: legacy value is not allowed in schema 1.1")
 
@@ -1200,6 +1204,15 @@ def validate_plan(
                     errors.append(
                         f"{path}.semantic_unit_refs: {unit_id!r} is missing from source.final_subtitle_units"
                     )
+            for aux_ref in sorted(auxiliary_refs):
+                if aux_ref in final_subtitle_hashes:
+                    errors.append(
+                        f"{path}.auxiliary_text_refs: {aux_ref!r} must not shadow source.final_subtitle_units"
+                    )
+                if aux_ref in semantic_refs:
+                    errors.append(
+                        f"{path}.auxiliary_text_refs: {aux_ref!r} must not overlap semantic_unit_refs"
+                    )
             subtitle_anchor = group.get("subtitle_anchor")
             if not isinstance(subtitle_anchor, dict):
                 errors.append(f"{path}.subtitle_anchor: required object for schema 1.2")
@@ -1357,8 +1370,8 @@ def validate_plan(
                 if not is_nonempty_string(text_ref):
                     errors.append(f"{vpath}.text_ref: required for schema 1.2 text operations")
                 text_hash = visual.get("text_hash")
-                if operation == "copy_from_subtitle" and not is_nonempty_string(text_hash):
-                    errors.append(f"{vpath}.text_hash: required for copy_from_subtitle text")
+                if not is_nonempty_string(text_hash):
+                    errors.append(f"{vpath}.text_hash: required for schema 1.2 text operations")
                 elif operation == "copy_from_subtitle" and is_nonempty_string(visual.get("text")) and sha256_text(visual["text"]) != text_hash:
                     errors.append(f"{vpath}: text_hash does not match visual.text")
                 if text_ref in semantic_refs:
@@ -1369,6 +1382,11 @@ def validate_plan(
                         errors.append(f"{vpath}: text_mismatch with final subtitle unit {text_ref!r}")
                     if expected_hash and is_nonempty_string(visual.get("text")) and sha256_text(visual["text"]) != expected_hash:
                         errors.append(f"{vpath}: text_mismatch with final subtitle unit {text_ref!r}")
+                elif text_ref in auxiliary_refs:
+                    if not is_nonempty_string(visual.get("text")):
+                        errors.append(f"{vpath}.text: required for auxiliary text self-hash")
+                    elif is_nonempty_string(text_hash) and sha256_text(visual["text"]) != text_hash:
+                        errors.append(f"{vpath}: auxiliary text_hash must be the self-hash of visual.text")
                 elif text_ref not in auxiliary_refs:
                     errors.append(
                         f"{vpath}.text_ref: must reference a declared semantic_unit_ref or auxiliary_text_ref"
@@ -1531,8 +1549,9 @@ def validate_plan(
             if is_v11:
                 if not is_nonempty_string(audio.get("motion_family")):
                     errors.append(f"{path}.audio.motion_family: required for schema 1.1")
+            if is_v11 or is_v12:
                 if not is_nonempty_string(audio.get("selection_basis")):
-                    errors.append(f"{path}.audio.selection_basis: required for schema 1.1")
+                    errors.append(f"{path}.audio.selection_basis: required for schema 1.1/1.2")
                 reuse_count = audio.get("reuse_count")
                 if not is_int(reuse_count) or reuse_count <= 0:
                     errors.append(f"{path}.audio.reuse_count: must be a positive integer")
@@ -1733,9 +1752,9 @@ def validate_plan(
             if sound_key:
                 previous_sound = sound_key
                 sound_counts[sound_key] = sound_counts.get(sound_key, 0) + 1
-                if is_v11 and sound_counts[sound_key] > reuse_cap:
+                if (is_v11 or is_v12) and sound_counts[sound_key] > reuse_cap:
                     errors.append(f"{path}.audio: sound asset {sound_key!r} exceeds reuse cap {reuse_cap}")
-                if is_v11 and is_int(audio.get("reuse_count")) and audio["reuse_count"] != sound_counts[sound_key]:
+                if (is_v11 or is_v12) and is_int(audio.get("reuse_count")) and audio["reuse_count"] != sound_counts[sound_key]:
                     errors.append(
                         f"{path}.audio.reuse_count: expected occurrence {sound_counts[sound_key]} for {sound_key!r}"
                     )

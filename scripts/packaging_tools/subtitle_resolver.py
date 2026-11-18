@@ -115,14 +115,23 @@ def resolve_text_hashes(plan: Any, subtitle_manifest: Any) -> dict[str, Any]:
                 continue
             if not declared:
                 errors.append(f"group {group.get('id')}: text_hash is required for text visual {ref!r}")
-            unit = manifest.get(str(ref))
-            if unit is None:
-                errors.append(f"group {group.get('id')}: text_ref {ref!r} is absent from subtitle manifest")
-                continue
             actual_text = _actual_text(operation)
             if not isinstance(actual_text, str):
                 errors.append(f"group {group.get('id')}: text visual {ref!r} must contain string text")
                 continue
+            actual = _text_hash(actual_text)
+            unit = manifest.get(str(ref))
+            if unit is None:
+                # 不在当前字幕 manifest 的 ref（辅助标记）只按 self-hash 校验
+                if isinstance(declared, str) and declared:
+                    ok = declared == actual
+                    if not ok:
+                        errors.append(
+                            f"group {group.get('id')}: auxiliary text_hash must be the self-hash of visual.text for {ref}"
+                        )
+                    resolved.append({"group_id": group.get("id"), "text_ref": ref, "text_hash": actual, "ok": ok})
+                continue
+            # 能在 manifest 解析出唯一 unit 的 ref 一律按 manifest 校验（不论列进哪个 refs）
             expected = unit.get("text_hash")
             manifest_text = unit.get("text")
             if not isinstance(expected, str) or not expected:
@@ -134,7 +143,6 @@ def resolve_text_hashes(plan: Any, subtitle_manifest: Any) -> dict[str, Any]:
                 errors.append(f"group {group.get('id')}: subtitle manifest text_hash is not the UTF-8 hash of its text")
             if declared != expected:
                 errors.append(f"group {group.get('id')}: declared text_hash differs from subtitle manifest")
-            actual = _text_hash(actual_text)
             if actual != expected:
                 errors.append(f"group {group.get('id')}: text_mismatch for {ref}")
             resolved.append({"group_id": group.get("id"), "text_ref": ref, "text_hash": actual, "ok": actual == expected})

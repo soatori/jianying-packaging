@@ -11,7 +11,7 @@ Use this skill to audit a saved timeline or plan semantic emphasis and its visua
 
 - Owns emphasis selection, flower text, group layout, templates, motion, transitions, overlays, and sound rationale tied to visible events.
 - jianying-rough-cut owns transcript correction, speech cuts, semantic rewriting, and subtitle alignment. Return content errors there.
-- jianying-editor owns draft decoding, encryption, replica discovery, transactional backups, low-level writes, read-back, validation, and rollback. This skill owns the schema 1.2 plan-to-draft adapter and invokes those existing transaction APIs; do not route packaging plans through `jianying-editor apply-plan`, which only applies `keep_blocks`.
+- jianying-editor owns draft decoding, encryption, replica discovery, transactional backups, low-level writes, read-back, validation, and rollback. This skill owns the schema 1.2 plan-to-draft adapter and invokes those existing transaction APIs; do not route packaging plans through the editor's `keep_blocks` application surface (pending a contract-versioned release).
 - The latest saved, user-confirmed timeline is authoritative for text, timing, segmentation, styles, layer order, visibility, and manual sound choices. Re-read it before each pass; do not apply stale locators or restore removed choices.
 - Keep project names, copy, timecodes, IDs, assets, colors, and one-off style choices in external case references, not in this reusable skill.
 
@@ -49,10 +49,16 @@ Choose analysis for review-only requests; it is read-only and may run at any wor
 5. Build and validate a plan with `python scripts/packaging_tool.py validate plan <plan.json>`. When sound is in scope, supply the current case's verified `--catalog <case-catalog.json>` and `--pools <case-pools.json>`; missing inputs remain unresolved and never fall back to bundled assets.
 6. Run `apply` without `--apply` first. Copy the reported `data.source_timeline_hash` into `review_report.source_timeline_hash`; `--apply` blocks if it is missing or differs from the current source. Before mutation, close Jianying and its tray/background process; apply blocks when the editor API reports that Jianying is running. For a layout or animation change, open the reported HTML preview, review its measured text bounds, safe zone, position, track, alpha, and duration, then record `review_report.visual_preview_status: "approved"` and the exact `visual_preview_sha256` in the plan. `--apply` blocks if that approval is missing or its hash no longer matches the current candidate. The HTML is a geometry/timing preview, not proof that Jianying retains or renders an effect. For animation plans, pass `--animation-cache-root` when cache discovery is ambiguous; include same-version capability evidence with `--animation-capabilities` and identify the running version with `--animation-version` when it cannot be detected. For sound, pass the same `--catalog` and `--pools` used during validation. If current timeline audio roles do not identify dialogue, supply `--existing-audio <dialogue-intervals.json>`; unresolved dialogue collision evidence blocks sound apply. The adapter supports schema 1.2, clones by default, uses the existing `JianyingProject` transaction API, and blocks unsupported prototypes/field mappings before writing. It copies current-draft media/template closures; external media must be staged first. Requested motion must have a non-empty motion payload in the prototype. Read back the result, validate it against the approved plan and source, and inspect ambiguous visual/audio results in Jianying after reopening.
 
-`stable` can be used to prepare a review plan. Any staging or final apply
-requires `source.content_pass: approved` and
-`source.subtitle_alignment.status: approved`; final also requires approved
-staging and verified/not-required remapping. The CLI enforces these status
+State × phase gates (merged; aligned with the plan validator):
+
+| `execution.mode` | `execution.phase` | `source.content_pass` | `subtitle_alignment.status` | `staging.review_status` | `comparison.remap_status` |
+|---|---|---|---|---|---|
+| review | staging | stable or approved | stable or approved | — | — |
+| review | final | stable or approved | approved | approved | not_required or verified |
+| apply | staging | approved | approved | — | — |
+| apply | final | approved | approved | approved | not_required or verified |
+
+`stable` is not user approval. The CLI enforces these status
 gates. Only the Agent can confirm that the current conversation authorized the
 write; `execution.mode=apply` and the `--apply` flag do not create that
 authorization.
@@ -122,7 +128,7 @@ Run these checks against the current saved timeline, not against an earlier expo
 3. **Same-screen review:** for each group inspect the first frame, a middle frame, and the final frame. Confirm every intended line is visible at the group end, there is no same-track overlap, and manual transforms were preserved.
 4. **Covered-subtitle review:** on the source timeline, originals remain unchanged. On an explicitly approved clone, only covered originals may be hidden; verify `visible=false` by read-back and by preview.
 5. **Editor review:** run `jianying-editor validate`, verify every replica, source hash preservation, backup presence, and plan/read-back equality.
-6. **Preview review:** use `jianying-preview frame` or `shot` at group start/middle/end. Stop on text mismatch, unexpected layer addition/removal, collision, obstruction, or a source-timeline change.
+6. **Preview review:** use jianying-editor to decode the saved timeline and review the generated `visual_preview` HTML (or frame screenshots captured from the decoded draft) at group start/middle/end. Stop on text mismatch, unexpected layer addition/removal, collision, obstruction, or a source-timeline change.
 
 Record the selected review times, observed layer counts, track assignments, backup path, and any unresolved speaker/listening issue in the review report.
 

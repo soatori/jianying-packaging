@@ -60,6 +60,12 @@ class SoundCatalogTests(unittest.TestCase):
         data["presets"][0]["leading_silence_us"] = 2000
         self.assertFalse(MODULE.validate_catalog(data)["ok"])
 
+    def test_typing_sound_form_is_accepted(self):
+        data = catalog()
+        data["presets"][0]["sound_form"] = "typing"
+        data["presets"][0]["default_trim_policy"] = "motion_span"
+        self.assertTrue(MODULE.validate_catalog(data)["ok"], MODULE.validate_catalog(data))
+
     def test_duplicate_candidate_is_rejected(self):
         data = pools()
         data["pools"][0]["candidates"].append({"preset_id": "synthetic-a", "rank": 4, "sound_form": "single_hit", "status": "verified"})

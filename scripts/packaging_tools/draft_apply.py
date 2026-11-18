@@ -2120,7 +2120,21 @@ def apply_packaging_plan(
             if review.get("visual_preview_sha256") != visual_preview_sha256:
                 return result("packaging_apply", data=preview_data, errors=["approved visual preview hash does not match the current candidate preview hash"])
 
-        close_warning = project._assert_editor_closed() if hasattr(project, "_assert_editor_closed") else None
+        missing_api = [
+            name for name in ("assert_editor_closed", "write_content")
+            if not callable(getattr(project, name, None))
+        ]
+        if missing_api:
+            return result(
+                "packaging_apply",
+                data=preview_data,
+                errors=[
+                    f"editor project is missing required public method {name}(); refusing to write"
+                    for name in missing_api
+                ],
+                warnings=apply_warnings,
+            )
+        close_warning = project.assert_editor_closed()
         if close_warning:
             return result("packaging_apply", data=preview_data, errors=[str(close_warning)], warnings=apply_warnings)
 
@@ -2177,7 +2191,7 @@ def apply_packaging_plan(
             return result("packaging_apply", data=preview_data, errors=target_errors, warnings=apply_warnings)
 
         try:
-            write_result = project._write_content(target_id, write_value)
+            write_result = project.write_content(target_id, write_value)
             readback = project.decode(project.content_path(target_id)).value
             if _canonical_json(readback) != _canonical_json(write_value):
                 raise DraftApplyError("editor read-back differs from the planned packaging value")
@@ -2191,7 +2205,7 @@ def apply_packaging_plan(
             rollback_error = None
             target_restored = False
             try:
-                project._write_content(target_id, clone_base)
+                project.write_content(target_id, clone_base)
                 current_after_failure = project.decode(project.content_path(target_id)).value
                 primary_restored = _canonical_json(current_after_failure) == _canonical_json(clone_base)
                 rollback_validation = project.validate(target_id)

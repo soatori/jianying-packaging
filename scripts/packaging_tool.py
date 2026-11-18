@@ -62,7 +62,10 @@ def _parse_editor_json(stdout: str) -> Any:
 def _run_editor_readonly(root: Path, command: list[str]) -> dict[str, Any]:
     script = root / "scripts" / "jianying_project.py"
     if not script.exists():
-        raise FileNotFoundError(f"jianying-editor CLI not found: {script}")
+        raise FileNotFoundError(
+            f"jianying-editor CLI not found: {script} "
+            "(pass --editor-root or set JIANYING_EDITOR_ROOT to the jianying-editor-skill root)"
+        )
     completed = subprocess.run(
         [sys.executable, str(script), *command],
         capture_output=True,
